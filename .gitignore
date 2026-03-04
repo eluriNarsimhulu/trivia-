@@ -169,7 +169,7 @@ env/
 *.tflite
 
 # Example specific model
-models/vit_fundus1.pth
+# models/vit_fundus1.pth
 
 # ---------------------------------
 # Node / Web
@@ -191,7 +191,7 @@ out/
 .vitepress/
 .vitepress/dist
 .vitepress/cache
-models/
+# models/
 # Logs
 logs
 *.log
