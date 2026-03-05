@@ -20,6 +20,7 @@ import '../../state/game_controller.dart';
 import '../../state/game_state.dart';
 import '../../core/models/game_phase.dart';
 import 'player_list_widget.dart';
+import '../game/game_screen.dart';
 
 class LobbyScreen extends StatelessWidget {
   const LobbyScreen({super.key});
@@ -100,15 +101,24 @@ class LobbyScreen extends StatelessWidget {
     );
   }
 
+  // void _handlePhaseTransition(BuildContext context, GamePhase phase) {
+  //   if (!context.mounted) return;
+  //   // Navigate to game screen when countdown starts.
+  //   // Actual game screen is built in Stage 5 extension / Stage 6.
+  //   // Placeholder navigation guard is here so the lobby correctly
+  //   // hands off when phase leaves lobby.
+  //   if (phase == GamePhase.countdown || phase == GamePhase.questionActive) {
+  //     // TODO(Stage 6): replace with named route or GameScreen push.
+  //     debugPrint('[LobbyScreen] Game started — navigate to GameScreen.');
+  //   }
+  // }
   void _handlePhaseTransition(BuildContext context, GamePhase phase) {
     if (!context.mounted) return;
-    // Navigate to game screen when countdown starts.
-    // Actual game screen is built in Stage 5 extension / Stage 6.
-    // Placeholder navigation guard is here so the lobby correctly
-    // hands off when phase leaves lobby.
-    if (phase == GamePhase.countdown || phase == GamePhase.questionActive) {
-      // TODO(Stage 6): replace with named route or GameScreen push.
-      debugPrint('[LobbyScreen] Game started — navigate to GameScreen.');
+
+    if (phase == GamePhase.countdown) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const GameScreen()),
+      );
     }
   }
 
