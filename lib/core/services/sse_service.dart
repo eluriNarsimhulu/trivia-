@@ -43,6 +43,10 @@ const _kBaseBackoff = Duration(milliseconds: 500);
 const _kMaxBackoff = Duration(seconds: 30);
 
 class SseService implements SseServiceInterface {
+   /// Base API URL injected by ServiceRegistry.
+  final String baseUrl;
+
+  SseService({required this.baseUrl});
   // ---------------------------------------------------------------------------
   // Internal state
   // ---------------------------------------------------------------------------
@@ -93,12 +97,12 @@ class SseService implements SseServiceInterface {
   Future<void> connect({
     required String sessionId,
     required String playerId,
-    String baseUrl = 'https://api.trivia.example.com',
+
   }) async {
     // Store params for reconnect cycles.
     _sessionId = sessionId;
     _playerId = playerId;
-    _baseUrl = baseUrl;
+    _baseUrl = this.baseUrl;
     _disconnected = false;
     _retryCount = 0;
 

@@ -50,7 +50,7 @@ class ServiceRegistry {
   final String _apiBaseUrl;
 
   ServiceRegistry({
-    String apiBaseUrl = 'https://api.trivia.example.com',
+    String apiBaseUrl = 'http://192.168.29.220:3000',
   }) : _apiBaseUrl = apiBaseUrl;
 
   // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ class ServiceRegistry {
     playerId = await playerIdentityService.getOrCreatePlayerId();
 
     // 2. Network services — constructed synchronously.
-    sseService  = SseService();
+    sseService  = SseService(baseUrl: _apiBaseUrl);
     restService = RestService(baseUrl: _apiBaseUrl);
 
     // 3. Controller — receives interfaces, never concrete types.
