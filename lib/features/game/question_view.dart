@@ -22,11 +22,13 @@ import 'answer_options_widget.dart';
 
 class QuestionView extends StatefulWidget {
   final GameState state;
+  final ValueNotifier<GameState> stateNotifier;
   final void Function(String answer) onAnswerSelected;
 
   const QuestionView({
     super.key,
     required this.state,
+    required this.stateNotifier,
     required this.onAnswerSelected,
   });
 
@@ -67,7 +69,8 @@ class _QuestionViewState extends State<QuestionView> {
             totalRounds:   state.session?.totalRounds ?? 0,
           ),
           const SizedBox(height: 16),
-          _AnswerProgressBar(answered: answered, total: total),
+          // _AnswerProgressBar(answered: answered, total: total),
+          _LiveAnswerProgress(stateNotifier: widget.stateNotifier),
           const SizedBox(height: 20),
           _QuestionCard(question: question),
           const SizedBox(height: 24),
@@ -128,6 +131,33 @@ class _QuestionHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// Before: QuestionView receives the full state and passes raw ints down.
+// Every ANSWER_COUNT event rebuilds the entire QuestionView tree.
+
+// After: isolate the progress bar behind its own listener.
+// The rest of QuestionView only rebuilds on phase/question changes.
+
+/// Add this to QuestionView — accepts the notifier directly
+/// so only this widget subtree rebuilds on answer count changes.
+class _LiveAnswerProgress extends StatelessWidget {
+  final ValueNotifier<GameState> stateNotifier;
+
+  const _LiveAnswerProgress({required this.stateNotifier});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<GameState>(
+      valueListenable: stateNotifier,
+      builder: (context, state, _) {
+        return _AnswerProgressBar(
+          answered: state.answeredCount,
+          total:    state.totalPlayers,
+        );
+      },
     );
   }
 }

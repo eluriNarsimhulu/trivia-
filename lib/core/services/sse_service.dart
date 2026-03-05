@@ -1,27 +1,27 @@
-/// SseService — concrete implementation of SseServiceInterface.
+/// Manages the persistent SSE connection to the game server.
 ///
-/// Responsibilities:
-///   1. Open a persistent HTTP connection to the SSE endpoint.
-///   2. Parse raw SSE frames into typed GameEvent objects.
-///   3. Emit parsed events on a broadcast StreamController.
-///   4. Auto-reconnect with exponential backoff on connection loss.
-///   5. Prevent duplicate connections — connect() replaces any active one.
-///   6. Tear everything down cleanly on disconnect().
+/// ## Responsibilities
+///   - Open a long-lived HTTP GET to `/sessions/{id}/events?playerId={id}`.
+///   - Parse raw SSE frames (event name + JSON data) into typed [GameEvent]s.
+///   - Emit parsed events on [events] — a broadcast [Stream<GameEvent>].
+///   - Auto-reconnect with exponential backoff on connection loss.
+///   - Ensure only one active [HttpClient] and [StreamSubscription] at a time.
 ///
-/// Protocol contract:
-///   This service is READ-ONLY from the game's perspective.
-///   It never sends data to the server. All client → server actions
-///   go through RestService. The SSE/REST boundary is enforced here
-///   by design: SseService has zero write capability.
+/// ## Protocol contract
+///   READ-ONLY. This service never sends data to the server.
+///   All client→server writes go through [RestServiceInterface].
 ///
-/// SSE framing (standard format):
-///   event: EVENT_NAME\n
-///   data: {"key": "value"}\n
-///   \n                          ← blank line = end of event frame
+/// ## Reconnect behaviour
+///   On drop: schedules reconnect with backoff (500ms → 1s → 2s … → 30s cap).
+///   On success: resets retry counter to 0.
+///   After [_kMaxRetries] failures: emits a terminal error on [events].
+///   [GameController] catches the terminal error and moves to [GamePhase.error].
 ///
-/// Dependencies:
-///   dart:async, dart:convert, dart:io (HttpClient)
-///   No third-party packages — keeps the dependency surface minimal.
+/// ## Stream lifecycle
+///   [events] is a broadcast stream that stays open across reconnects.
+///   [GameController] subscribes once and never re-subscribes.
+///   The stream is only closed on an explicit [disconnect] call.
+
 
 import 'dart:async';
 import 'dart:convert';

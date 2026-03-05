@@ -68,8 +68,11 @@ class GameScreen extends StatelessWidget {
         if (question == null) return _loadingView(key: const ValueKey('q-loading'));
 
         return QuestionView(
+          // key: const ValueKey('question'),
+          // state: state,
           key: const ValueKey('question'),
           state: state,
+          stateNotifier: controller.state,
           onAnswerSelected: (answer) {
             controller.submitAnswer(
               questionId: question.id,

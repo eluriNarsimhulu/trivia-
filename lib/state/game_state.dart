@@ -1,21 +1,23 @@
-/// The single source of truth for the entire client-side game view.
+/// Immutable snapshot of the entire client-side game view at a point in time.
 ///
-/// Architecture notes:
-///   1. IMMUTABLE — every update produces a new instance via copyWith().
-///      No field is ever changed in place. This makes state diffs trivial
-///      and eliminates entire classes of subtle bugs.
+/// This is the single source of truth that all UI widgets read from.
+/// No widget ever writes to this directly — all mutations flow through
+/// [GameController.state] via [GameState.copyWith].
 ///
-///   2. SEPARATION OF CONCERNS:
-///      - `session`      → who is in the room (server-authoritative)
-///      - `currentPlayer`→ this client's own identity
-///      - `phase`        → where in the game flow we are
-///      - question/score fields → transient per-question data
+/// Field groupings:
+///   Identity   — who this client is ([currentPlayer])
+///   Session    — who else is in the room ([session])
+///   Phase      — where in the game flow we are ([phase])
+///   Question   — the active question and answer progress
+///   Result     — score breakdown after each question
+///   Leaderboard— top-5 standings
+///   Error      — non-null when a recoverable or terminal error has occurred
 ///
-///   3. NULLABLE FIELDS signal "not applicable in current phase."
-///      e.g. currentQuestion is null in lobby. The controller
-///      guarantees these contracts — the UI checks before reading.
-///
-///   4. No methods that change state. GameController owns all mutations.
+/// Null contract:
+///   Fields are null when they are not meaningful in the current phase.
+///   For example, [currentQuestion] is null in [GamePhase.lobby].
+///   [GameController] enforces these contracts — UI should always null-check
+///   before reading phase-specific fields.
 
 import '../core/models/game_phase.dart';
 import '../core/models/game_session.dart';
@@ -60,7 +62,7 @@ class GameState {
   // -- Error --
   final String? errorMessage;
 
-  const GameState({
+  GameState({
     this.currentPlayer,
     this.session,
     this.phase = GamePhase.initial,
@@ -73,14 +75,14 @@ class GameState {
     this.lastScoreDelta,
     this.lastSpeedBonus,
     this.lastStreakBonus,
-    this.topPlayers = const [],
+    List<PlayerScore> topPlayers = const [],
     this.winnerPlayerId,
     this.rewardPointsGranted,
     this.errorMessage,
-  });
+  }) : topPlayers = List.unmodifiable(topPlayers);
 
   /// The guaranteed-safe starting state on app launch.
-  const GameState.initial() : this();
+  GameState.initial() : this();
 
   /// Convenience: true if this client is the host of the current session.
   bool get isHost =>
@@ -120,7 +122,8 @@ class GameState {
       lastScoreDelta:      lastScoreDelta ?? this.lastScoreDelta,
       lastSpeedBonus:      lastSpeedBonus ?? this.lastSpeedBonus,
       lastStreakBonus:      lastStreakBonus ?? this.lastStreakBonus,
-      topPlayers:          topPlayers ?? this.topPlayers,
+      // topPlayers:          topPlayers ?? this.topPlayers,
+      topPlayers: topPlayers != null ? List.unmodifiable(topPlayers) : this.topPlayers,
       winnerPlayerId:      winnerPlayerId ?? this.winnerPlayerId,
       rewardPointsGranted: rewardPointsGranted ?? this.rewardPointsGranted,
       errorMessage:        errorMessage ?? this.errorMessage,

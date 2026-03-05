@@ -1,27 +1,23 @@
-/// GameController — State Machine Enforced Version (Stage 2)
+/// The sole authority on game state transitions.
 ///
-/// Why phase validation matters in SSE systems:
-///   Unlike WebSockets, SSE is a unidirectional HTTP stream. On reconnect,
-///   the server may replay recent events, or buffered events may arrive
-///   out of order. Without a transition guard, a replayed GAME_START event
-///   could reset an active game back to countdown. The validator prevents this.
+/// ## Responsibilities
+///   - Subscribe to [SseServiceInterface.events] and dispatch typed [GameEvent]s.
+///   - Validate every phase transition via [_canTransition] before applying it.
+///   - Produce a new [GameState] on every valid event via [GameState.copyWith].
+///   - Guard against duplicate answers, late submissions, and illegal transitions.
+///   - Manage client-side timers (countdown, result reveal delay).
+///   - Expose [state] as a [ValueNotifier] for zero-package reactive UI.
 ///
-/// Why SSE events arrive out of order:
-///   Each SSE reconnect opens a fresh HTTP connection. The server may send
-///   a buffered QUESTION event before the client has processed the preceding
-///   GAME_START. The state machine must be resilient to these races.
+/// ## What this class does NOT do
+///   - Render any UI.
+///   - Calculate scores (server-authoritative).
+///   - Know HTTP endpoint URLs (delegated to [RestServiceInterface]).
+///   - Know SSE connection details (delegated to [SseServiceInterface]).
 ///
-/// Why countdown is client-side but question start is server-driven:
-///   The server controls when questions open (it broadcasts QUESTION over SSE).
-///   The 3-second countdown is purely a UX affordance — it gives players
-///   a visual "get ready" moment. It does not gate any server action.
-///   The client transitions to questionActive only when the server sends
-///   the QUESTION event, not when the local timer fires.
-///
-/// Timer ownership:
-///   _countdownTimer  — runs during GamePhase.countdown (3s UX delay)
-///   _resultDelayTimer — runs during GamePhase.questionClosed (1.2s reveal delay)
-///   Both are cancelled on leaveSession() and dispose().
+/// ## Dependency contract
+///   Both service dependencies are injected as interfaces.
+///   The concrete [SseService] and [RestService] are never imported here.
+///   This keeps the controller fully unit-testable with mock services.
 
 import 'dart:async';
 import 'dart:io';
@@ -32,10 +28,9 @@ import '../core/models/game_events.dart';
 import '../core/models/game_phase.dart';
 import '../core/models/game_session.dart';
 import '../core/models/player.dart';
-import '../core/models/scoring.dart';
-import '../core/services/sse_service.dart';
 import '../core/services/rest_service.dart';
 import 'game_state.dart';
+import '../core/utils/logger.dart';
 
 import '../core/services/sse_service_interface.dart';
 import '../core/services/rest_service_interface.dart';
@@ -54,7 +49,7 @@ class GameController {
 
   /// Single reactive state atom. UI subscribes via ValueListenableBuilder.
   final ValueNotifier<GameState> state =
-      ValueNotifier(const GameState.initial());
+      ValueNotifier(GameState.initial());
 
   // Active timers — tracked so we can cancel safely.
   Timer? _countdownTimer;
@@ -108,8 +103,12 @@ class GameController {
     final currentPhase = state.value.phase;
 
     if (!_canTransition(currentPhase, newPhase)) {
-      debugPrint(
-        '[GameController] ⛔ Illegal transition: $currentPhase → $newPhase — ignored.',
+      // debugPrint(
+      //   '[GameController] ⛔ Illegal transition: $currentPhase → $newPhase — ignored.',
+      // );
+      gameWarn(
+        'GameController',
+        'Illegal transition: $currentPhase → $newPhase — ignored.',
       );
       return;
     }
@@ -198,11 +197,12 @@ class GameController {
   /// Server broadcasts GAME_START over SSE to all clients (host included).
   Future<void> startGame() async {
     if (!state.value.isHost) {
-      debugPrint('[GameController] startGame() called by non-host — ignored.');
+      gameWarn('GameController', 'startGame() called by non-host — ignored.');
       return;
     }
-    final session = state.value.session;
-    if (session == null) return;
+
+    if (!_guardSession()) return;
+    final session = state.value.session!;
 
     await _restService.startGame(
       sessionId: session.sessionId,
@@ -242,7 +242,7 @@ class GameController {
     // and this method executing (especially on slow devices).
     // The controller is authoritative; the UI phase-check is a UX hint only.
     if (state.value.phase != GamePhase.questionActive) {
-      debugPrint('[GameController] submitAnswer() — phase is not questionActive, ignored.');
+      gameWarn('GameController', 'submitAnswer() ignored — phase is not questionActive');
       return;
     }
 
@@ -253,13 +253,14 @@ class GameController {
     // so the second call is dropped at the controller layer regardless
     // of UI state.
     if (_lastAnsweredQuestionId == questionId) {
-      debugPrint('[GameController] submitAnswer() — already answered question $questionId, ignored.');
+      gameWarn('GameController', 'submitAnswer() duplicate ignored for question $questionId');
       return;
     }
 
-    final session = state.value.session;
-    final player  = state.value.currentPlayer;
-    if (session == null || player == null) return;
+    if (!_guardSession() || !_guardPlayer()) return;
+
+    final session = state.value.session!;
+    final player  = state.value.currentPlayer!;
 
     // Mark as answered immediately — before the async REST call.
     // This ensures a second tap that arrives before the HTTP round-trip
@@ -278,16 +279,16 @@ class GameController {
         // 409 Conflict = server already has our answer (duplicate at HTTP level).
         // 400 Bad Request = question already closed server-side.
         // Both are safe to swallow — state is already correct.
-        debugPrint('[GameController] submitAnswer() — ignorable REST error: $e');
+        gameLog('GameController', 'submitAnswer() ignorable REST error: $e');
       } else {
         // Unexpected server error (5xx, auth failure, etc.).
         // Surface it non-destructively — phase stays intact, user sees a banner.
-        debugPrint('[GameController] submitAnswer() — REST error: $e');
+        gameError('GameController', 'submitAnswer() REST error: $e');
         _emit(state.value.copyWith(errorMessage: e.message));
       }
     } catch (e) {
       // Network-level failure (socket timeout, no connectivity).
-      debugPrint('[GameController] submitAnswer() — network error: $e');
+      gameError('GameController', 'submitAnswer() network error: $e');
       _emit(state.value.copyWith(errorMessage: 'Answer submission failed. Check your connection.'));
     }
   }
@@ -300,7 +301,7 @@ class GameController {
 
     _cancelAllTimers();
     await _sseService.disconnect();
-    _emit(const GameState.initial());
+    _emit(GameState.initial());
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -406,8 +407,9 @@ class GameController {
   void _handleGameStart(GameStartEvent event) {
     final currentPhase = state.value.phase;
     if (currentPhase != GamePhase.lobby) {
-      debugPrint(
-        '[GameController] ⚠️ GAME_START ignored — phase is $currentPhase, expected lobby.',
+      gameWarn(
+        'GameController',
+        'GAME_START ignored — phase is $currentPhase, expected lobby',
       );
       return;
     }
@@ -439,9 +441,7 @@ class GameController {
     final validPriorPhases = {GamePhase.countdown, GamePhase.leaderboard};
 
     if (!validPriorPhases.contains(currentPhase)) {
-      debugPrint(
-        '[GameController] ⚠️ QUESTION ignored — phase is $currentPhase.',
-      );
+      gameWarn('GameController', 'QUESTION ignored — phase is $currentPhase');
       return;
     }
 
@@ -482,7 +482,7 @@ class GameController {
   /// Debounced server push — stale counts after close must be dropped.
   void _handleAnswerCount(AnswerCountEvent event) {
     if (state.value.phase != GamePhase.questionActive) {
-      debugPrint('[GameController] ⚠️ ANSWER_COUNT ignored — phase is ${state.value.phase}.');
+      gameWarn('GameController', 'ANSWER_COUNT ignored — phase is ${state.value.phase}');
       return;
     }
     // No phase change — purely informational update.
@@ -519,7 +519,7 @@ class GameController {
     _resultDelayTimer = Timer(_kResultRevealDelay, () {
       // Re-check phase: a leaveSession() during the delay must abort this.
       if (state.value.phase != GamePhase.questionClosed) {
-        debugPrint('[GameController] Result delay fired but phase changed — aborted.');
+        gameWarn('GameController', 'Result delay fired but phase changed — aborted');
         return;
       }
       _transitionTo(
@@ -581,7 +581,7 @@ class GameController {
       // will trigger the real questionActive transition.
       // If QUESTION has already arrived and phase moved on, this is a no-op.
       if (state.value.phase == GamePhase.countdown) {
-        debugPrint('[GameController] Countdown complete — awaiting QUESTION from server.');
+        gameLog('GameController', 'Countdown complete — awaiting QUESTION from server');
       }
     });
   }
@@ -614,8 +614,8 @@ class GameController {
   // }
 
   void _onSseError(Object error) {
-    
-    debugPrint('[GameController] SSE error: $error');
+
+    gameError('GameController', 'SSE error: $error');
 
     final isTerminal = error is SocketException &&
         error.message.contains('permanently disconnected');
@@ -648,18 +648,34 @@ class GameController {
   // HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
 
+  bool _guardSession() {
+    assert(
+      state.value.session != null,
+      '[GameController] Expected an active session but session is null.',
+    );
+    return state.value.session != null;
+  }
+
+  bool _guardPlayer() {
+    assert(
+      state.value.currentPlayer != null,
+      '[GameController] Expected currentPlayer but it is null.',
+    );
+    return state.value.currentPlayer != null;
+  }
   /// Raw state emission — only called for non-phase-changing updates
   /// (player list, answer count). All phase changes go through _transitionTo().
   void _emit(GameState newState) {
     state.value = newState;
   }
 
-  void dispose() {
+  Future<void> dispose() async {
     _permanentErrorEmitted = false;
     _cancelAllTimers();
-    _sseService.disconnect();
-    state.dispose();
+    await _sseService.disconnect();   // wait for SSE teardown
+    state.dispose();                  // dispose notifier last
   }
+  
 }
 // ```
 
