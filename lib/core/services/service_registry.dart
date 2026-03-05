@@ -24,6 +24,7 @@ import 'rest_service.dart';
 import 'rest_service_interface.dart';
 import 'sse_service.dart';
 import '../../state/game_controller.dart';
+import 'sse_service_interface.dart';
 
 class ServiceRegistry {
   // ---------------------------------------------------------------------------

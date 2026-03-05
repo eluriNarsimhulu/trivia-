@@ -37,6 +37,7 @@ import '../core/services/rest_service.dart';
 import 'game_state.dart';
 
 import '../core/services/sse_service_interface.dart';
+import '../core/services/rest_service_interface.dart';
 // import '../core/services/rest_service_interface.dart';
 
 /// How long the "get ready" countdown runs before we expect the QUESTION event.
