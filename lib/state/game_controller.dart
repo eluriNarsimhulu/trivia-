@@ -24,6 +24,7 @@
 ///   Both are cancelled on leaveSession() and dispose().
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -58,6 +59,17 @@ class GameController {
   // Active timers — tracked so we can cancel safely.
   Timer? _countdownTimer;
   Timer? _resultDelayTimer;
+
+  // ---------------------------------------------------------------------------
+  // Edge case tracking fields
+  // ---------------------------------------------------------------------------
+
+  /// Tracks the question ID already answered by this client.
+  /// Prevents duplicate answer submissions.
+  String? _lastAnsweredQuestionId;
+
+  /// Tracks if a permanent SSE error was already emitted.
+  bool _permanentErrorEmitted = false;
 
   GameController({
     required SseServiceInterface sseService,
@@ -201,28 +213,91 @@ class GameController {
   }
 
   /// Submits answer via REST. Rejected if phase is not questionActive.
+  // Future<void> submitAnswer({
+  //   required String questionId,
+  //   required String answer,
+  // }) async {
+  //   if (state.value.phase != GamePhase.questionActive) {
+  //     debugPrint('[GameController] submitAnswer() outside questionActive — ignored.');
+  //     return;
+  //   }
+  //   final session = state.value.session;
+  //   final player = state.value.currentPlayer;
+  //   if (session == null || player == null) return;
+
+  //   await _restService.submitAnswer(
+  //     sessionId:  session.sessionId,
+  //     questionId: questionId,
+  //     playerId:   player.id,
+  //     answer:     answer,
+  //   );
+  // }
+
   Future<void> submitAnswer({
     required String questionId,
     required String answer,
   }) async {
+    // Guard 1 — late submission.
+    // Phase may have moved to questionClosed between the user tapping
+    // and this method executing (especially on slow devices).
+    // The controller is authoritative; the UI phase-check is a UX hint only.
     if (state.value.phase != GamePhase.questionActive) {
-      debugPrint('[GameController] submitAnswer() outside questionActive — ignored.');
+      debugPrint('[GameController] submitAnswer() — phase is not questionActive, ignored.');
       return;
     }
+
+    // Guard 2 — duplicate submission.
+    // In real-time games the user may tap an answer button twice quickly
+    // before the state update from the first submission re-renders the UI
+    // with locked buttons. We track the last answered question ID here
+    // so the second call is dropped at the controller layer regardless
+    // of UI state.
+    if (_lastAnsweredQuestionId == questionId) {
+      debugPrint('[GameController] submitAnswer() — already answered question $questionId, ignored.');
+      return;
+    }
+
     final session = state.value.session;
-    final player = state.value.currentPlayer;
+    final player  = state.value.currentPlayer;
     if (session == null || player == null) return;
 
-    await _restService.submitAnswer(
-      sessionId:  session.sessionId,
-      questionId: questionId,
-      playerId:   player.id,
-      answer:     answer,
-    );
+    // Mark as answered immediately — before the async REST call.
+    // This ensures a second tap that arrives before the HTTP round-trip
+    // completes is still caught by Guard 2 above.
+    _lastAnsweredQuestionId = questionId;
+
+    try {
+      await _restService.submitAnswer(
+        sessionId:  session.sessionId,
+        questionId: questionId,
+        playerId:   player.id,
+        answer:     answer,
+      );
+    } on RestException catch (e) {
+      if (e.isIgnorable) {
+        // 409 Conflict = server already has our answer (duplicate at HTTP level).
+        // 400 Bad Request = question already closed server-side.
+        // Both are safe to swallow — state is already correct.
+        debugPrint('[GameController] submitAnswer() — ignorable REST error: $e');
+      } else {
+        // Unexpected server error (5xx, auth failure, etc.).
+        // Surface it non-destructively — phase stays intact, user sees a banner.
+        debugPrint('[GameController] submitAnswer() — REST error: $e');
+        _emit(state.value.copyWith(errorMessage: e.message));
+      }
+    } catch (e) {
+      // Network-level failure (socket timeout, no connectivity).
+      debugPrint('[GameController] submitAnswer() — network error: $e');
+      _emit(state.value.copyWith(errorMessage: 'Answer submission failed. Check your connection.'));
+    }
   }
 
   /// Leaves the session, cancels all timers, tears down SSE.
   Future<void> leaveSession() async {
+    // Reset the terminal error flag so a fresh session started after
+    // leaving is not incorrectly treated as already permanently failed.
+    _permanentErrorEmitted = false;
+
     _cancelAllTimers();
     await _sseService.disconnect();
     _emit(const GameState.initial());
@@ -273,17 +348,42 @@ class GameController {
   // HANDLERS
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // void _handlePlayerJoined(PlayerJoinedEvent event) {
+  //   // No phase restriction — players can join any time before game ends.
+  //   final session = state.value.session;
+  //   if (session == null) return;
+
+  //   final updatedPlayers = [
+  //     ...session.players.where((p) => p.id != event.player.id),
+  //     event.player,
+  //   ];
+  //   _emit(state.value.copyWith(
+  //     session: session.copyWith(players: List.unmodifiable(updatedPlayers)),
+  //   ));
+  // }
   void _handlePlayerJoined(PlayerJoinedEvent event) {
-    // No phase restriction — players can join any time before game ends.
+    // No phase restriction — players can reconnect at any point.
     final session = state.value.session;
     if (session == null) return;
 
-    final updatedPlayers = [
-      ...session.players.where((p) => p.id != event.player.id),
-      event.player,
-    ];
+    // If the player already exists in the list (reconnect scenario),
+    // update only their connection flag rather than appending a duplicate.
+    // If they are genuinely new (fresh join), they are appended.
+    // Either way, question/score state is completely untouched.
+    final alreadyExists = session.players.any((p) => p.id == event.player.id);
+
+    final updatedPlayers = alreadyExists
+        ? session.players.map((p) {
+            return p.id == event.player.id
+                ? p.copyWith(isConnected: true)   // restore connection flag
+                : p;
+          }).toList()
+        : [...session.players, event.player];     // genuine new join
+
     _emit(state.value.copyWith(
-      session: session.copyWith(players: List.unmodifiable(updatedPlayers)),
+      session: session.copyWith(
+        players: List.unmodifiable(updatedPlayers),
+      ),
     ));
   }
 
@@ -344,6 +444,11 @@ class GameController {
       );
       return;
     }
+
+    // Reset the duplicate-answer guard for the incoming question.
+    // Each new question gets a clean slate — the previous question's ID
+    // must not block submission for the next one.
+    _lastAnsweredQuestionId = null;
 
     // Cancel the countdown timer — the server has taken over.
     _cancelCountdownTimer();
@@ -500,12 +605,43 @@ class GameController {
   // ERROR HANDLING
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // void _onSseError(Object error) {
+  //   // Surface error for UI reconnection banner. Phase is preserved —
+  //   // game resumes naturally when SSE reconnects and replays missed events.
+  //   // The transition validator ensures replayed events cannot corrupt state.
+  //   debugPrint('[GameController] SSE error: $error');
+  //   _emit(state.value.copyWith(errorMessage: error.toString()));
+  // }
+
   void _onSseError(Object error) {
-    // Surface error for UI reconnection banner. Phase is preserved —
-    // game resumes naturally when SSE reconnects and replays missed events.
-    // The transition validator ensures replayed events cannot corrupt state.
+    
     debugPrint('[GameController] SSE error: $error');
-    _emit(state.value.copyWith(errorMessage: error.toString()));
+
+    final isTerminal = error is SocketException &&
+        error.message.contains('permanently disconnected');
+
+    if (isTerminal && !_permanentErrorEmitted) {
+      // SseService has exhausted all reconnect attempts.
+      // Transition to error phase so GameScreen shows the error UI.
+      // The flag prevents this block from firing multiple times if the
+      // stream emits several terminal errors before the UI reacts.
+      _permanentErrorEmitted = true;
+      _cancelAllTimers();
+      _emit(state.value.copyWith(
+        phase:        GamePhase.error,
+        errorMessage: 'Connection permanently lost. Please rejoin.',
+      ));
+      return;
+    }
+
+    // Non-terminal error (transient drop — SseService is reconnecting).
+    // Preserve the current phase so the game can resume seamlessly.
+    // The UI shows a non-blocking reconnecting banner via errorMessage.
+    if (!_permanentErrorEmitted) {
+      _emit(state.value.copyWith(
+        errorMessage: 'Reconnecting…',
+      ));
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -519,6 +655,7 @@ class GameController {
   }
 
   void dispose() {
+    _permanentErrorEmitted = false;
     _cancelAllTimers();
     _sseService.disconnect();
     state.dispose();
