@@ -443,7 +443,9 @@ function _endGame(session, finalLeaderboard) {
   // Increased from 10s to 60s — gives mobile clients time to receive
   // GAME_END and gracefully disconnect before server cleanup.
   // SSE reconnects on mobile can take 15-30s on poor networks.
-  setTimeout(() => {
+  session.timers.cleanup = setTimeout(() => {
+
+    session.timers.cleanup = null;
 
     _clearAllTimers(session);
 
@@ -534,6 +536,7 @@ function _clearAllTimers(session) {
   _clearTimer(session, 'answerCount');
   _clearTimer(session, 'result');
   _clearTimer(session, 'leaderboard');
+  _clearTimer(session, 'cleanup');
 }
 
 /**
@@ -567,6 +570,9 @@ function restartGame(sessionId) {
     return { ok: false, error: 'Game has not ended yet.' };
   }
 
+  // Reset all timers.
+  _clearAllTimers(session);
+
   // Reset all game state — keep players and connections untouched.
   session.questions            = [];
   session.currentQuestionIndex = -1;
@@ -574,8 +580,6 @@ function restartGame(sessionId) {
   session.answers              = new Map();
   session.phase                = 'lobby';
 
-  // Reset all timers.
-  _clearAllTimers(session);
 
   // Reset scores for all players — fresh game.
   for (const [playerId] of session.players) {

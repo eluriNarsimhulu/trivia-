@@ -648,8 +648,7 @@ Future<void> restartGame() async {
   }
 
   void _handleGameRestarted(GameRestartedEvent event) {
-
-    // Only valid from gameEnd
+    
     if (state.value.phase != GamePhase.gameEnd) {
       gameWarn(
         'GameController',
@@ -658,34 +657,35 @@ Future<void> restartGame() async {
       return;
     }
 
-    final session = state.value.session;
-    if (session == null) return;
-
-    // Cancel any leftover timers from previous game
     _cancelAllTimers();
 
     _permanentErrorEmitted = false;
     _lastAnsweredQuestionId = null;
+
+    final session = state.value.session;
+    if (session == null) return;
 
     final updatedSession = session.copyWith(
       players: event.players,
       currentRound: 0,
     );
 
-    // gameEnd → lobby
     _transitionTo(
       GamePhase.lobby,
       updater: (s) => s.copyWith(
         session: updatedSession,
         currentQuestion: null,
+        questionIndex: 0,
+        answeredCount: 0,
+        totalPlayers: 0,
         correctAnswer: null,
         lastScoreDelta: null,
         lastSpeedBonus: null,
         lastStreakBonus: null,
-        topPlayers: [],
+        topPlayers: const [],
         winnerPlayerId: null,
         rewardPointsGranted: null,
-        answeredCount: 0,
+        scoringRules: null,
         errorMessage: null,
       ),
     );

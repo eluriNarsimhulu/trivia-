@@ -76,6 +76,7 @@ process.on('SIGINT', () => {
     if (session.timers.answerCount) clearTimeout(session.timers.answerCount);
     if (session.timers.result)      clearTimeout(session.timers.result);
     if (session.timers.leaderboard) clearTimeout(session.timers.leaderboard);
+    if (session.timers.cleanup)     clearTimeout(session.timers.cleanup);
   }
 
   console.log('[Server] Done. Goodbye.');

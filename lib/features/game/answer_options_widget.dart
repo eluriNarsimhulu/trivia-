@@ -212,26 +212,30 @@ class _TrueFalseOptions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min, // critical
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
+        SizedBox(
+          height: 72,
           child: _TrueFalseButton(
-            label:    'True',
-            icon:     Icons.check_circle_outline,
-            color:    const Color(0xFF26DE81),
+            label: 'True',
+            icon: Icons.check_circle_outline,
+            color: const Color(0xFF26DE81),
             isChosen: selectedAnswer == 'true',
             isLocked: isLocked,
-            onTap:    () => onSelected('true'),
+            onTap: () => onSelected('true'),
           ),
         ),
-        const SizedBox(height: 16),
-        Expanded(
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 72,
           child: _TrueFalseButton(
-            label:    'False',
-            icon:     Icons.cancel_outlined,
-            color:    const Color(0xFFE94560),
+            label: 'False',
+            icon: Icons.cancel_outlined,
+            color: const Color(0xFFE94560),
             isChosen: selectedAnswer == 'false',
             isLocked: isLocked,
-            onTap:    () => onSelected('false'),
+            onTap: () => onSelected('false'),
           ),
         ),
       ],
