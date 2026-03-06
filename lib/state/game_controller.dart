@@ -1,3 +1,5 @@
+// project_folder/lib/state/game_controller.dart
+
 /// The sole authority on game state transitions.
 ///
 /// ## Responsibilities
@@ -34,6 +36,7 @@ import '../core/utils/logger.dart';
 
 import '../core/services/sse_service_interface.dart';
 import '../core/services/rest_service_interface.dart';
+
 // import '../core/services/rest_service_interface.dart';
 
 /// How long the "get ready" countdown runs before we expect the QUESTION event.
@@ -86,10 +89,10 @@ class GameController {
       GamePhase.lobby:          {GamePhase.countdown},
       GamePhase.countdown:      {GamePhase.questionActive},
       GamePhase.questionActive: {GamePhase.questionClosed},
-      GamePhase.questionClosed: {GamePhase.roundResult},
+      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard}, // ← add leaderboard
       GamePhase.roundResult:    {GamePhase.leaderboard},
       GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd},
-      // error and gameEnd are terminal — no outbound transitions.
+      GamePhase.gameEnd:        {GamePhase.lobby},
     };
     return allowedTransitions[from]?.contains(to) ?? false;
   }
@@ -210,6 +213,34 @@ class GameController {
     );
     // No local phase change here. We wait for GAME_START over SSE
     // so all clients transition lobby → countdown simultaneously.
+  }
+
+  /// HOST-ONLY: restarts the game with the same players.
+/// Server broadcasts GAME_RESTARTED to all clients over SSE.
+/// SSE connection is kept alive — no reconnect needed.
+Future<void> restartGame() async {
+    if (!state.value.isHost) {
+      gameWarn('GameController', 'restartGame() called by non-host — ignored.');
+      return;
+    }
+
+    if (!_guardSession()) return;
+
+    final session = state.value.session!;
+
+    try {
+      await _restService.restartGame(
+        sessionId: session.sessionId,
+        hostId: state.value.currentPlayer!.id,
+      );
+      // No local phase change.
+      // GAME_RESTARTED event from server drives the transition.
+    } catch (e) {
+      gameError('GameController', 'restartGame() failed: $e');
+      _emit(state.value.copyWith(
+        errorMessage: 'Restart failed. Please try again.',
+      ));
+    }
   }
 
   /// Submits answer via REST. Rejected if phase is not questionActive.
@@ -344,6 +375,8 @@ class GameController {
         _handleLeaderboard(event);
       case GameEndEvent():
         _handleGameEnd(event);
+      case GameRestartedEvent():          // ← ADD
+        _handleGameRestarted(event);
     }
   }
 
@@ -457,14 +490,11 @@ class GameController {
 
     final session = state.value.session;
 
-    // countdown → questionActive  (or leaderboard → countdown → questionActive,
-    // but QUESTION event skips the countdown on subsequent rounds if server
-    // sends it immediately — _canTransition handles this via leaderboard → countdown
-    // only; if we are in leaderboard we first need countdown. In practice the
-    // server sends a new GAME_START-style countdown signal. This guard means
-    // if QUESTION arrives while in leaderboard it is rejected, and a new
-    // countdown event from server will move us first. This is intentional:
-    // the server controls the pacing.)
+    // Valid phases: countdown (normal flow) or leaderboard (between rounds).
+    // The server always broadcasts ROUND_COUNTDOWN before each QUESTION,
+    // so the client should normally already be in GamePhase.countdown when
+    // this event arrives. Accepting leaderboard as well makes the handler
+    // resilient to minor event ordering differences during reconnects.
     _transitionTo(
       GamePhase.questionActive,
       updater: (s) => s.copyWith(
@@ -535,18 +565,66 @@ class GameController {
     });
   }
 
+  // void _handleRoundCountdown(RoundCountdownEvent event) {
+  //   if (state.value.phase != GamePhase.leaderboard) {
+  //     gameWarn('GameController',
+  //       'ROUND_COUNTDOWN ignored — phase is ${state.value.phase}');
+  //     return;
+  //   }
+
+  //   // leaderboard → countdown is whitelisted in _canTransition.
+  //   _transitionTo(GamePhase.countdown);
+
+  //   // Visual countdown only — server drives actual QUESTION timing.
+  //   _startCountdownTimer();
+  // }
   void _handleRoundCountdown(RoundCountdownEvent event) {
-    // Valid from leaderboard phase only — between rounds.
-    if (state.value.phase != GamePhase.leaderboard) {
-      gameWarn('GameController', 'ROUND_COUNTDOWN ignored — phase is ${state.value.phase}');
+    final phase = state.value.phase;
+
+    // Accept from leaderboard (normal rounds)
+    // OR countdown (first round after GAME_START)
+    if (phase != GamePhase.leaderboard && phase != GamePhase.countdown) {
+      gameWarn('GameController',
+        'ROUND_COUNTDOWN ignored — phase is $phase');
       return;
     }
-    _transitionTo(GamePhase.countdown);
+
+    // Only transition if we came from leaderboard.
+    // First round is already in countdown due to GAME_START.
+    if (phase == GamePhase.leaderboard) {
+      _transitionTo(GamePhase.countdown);
+    }
+
     _startCountdownTimer();
   }
 
   void _handleLeaderboard(LeaderboardEvent event) {
-    final session = state.value.session;
+  final session = state.value.session;
+
+  // Cancel any pending result-reveal delay.
+  // If LEADERBOARD arrives before the 1200ms result timer fires,
+  // we skip straight from questionClosed → leaderboard.
+  // This prevents Flutter getting stuck in questionClosed/roundResult
+  // when the server's timing is tight.
+  _cancelResultDelayTimer();
+
+  final currentPhase = state.value.phase;
+
+  // Force the state machine through intermediate phases if needed.
+  // LEADERBOARD can arrive when Flutter is in:
+  //   - roundResult    (normal flow)
+  //   - questionClosed (server beat our 1200ms delay timer)
+  // In both cases we must reach leaderboard cleanly.
+  if (currentPhase == GamePhase.questionClosed) {
+      // Skip roundResult — jump directly.
+      // We must pass through it to satisfy the whitelist:
+      // questionClosed → roundResult → leaderboard
+      _emit(state.value.copyWith(
+        phase:          GamePhase.roundResult,
+        lastScoreDelta: state.value.lastScoreDelta,
+      ));
+    }
+
     _transitionTo(
       GamePhase.leaderboard,
       updater: (s) => s.copyWith(
@@ -565,6 +643,50 @@ class GameController {
         topPlayers:          event.finalLeaderboard,
         winnerPlayerId:      event.winnerPlayerId,
         rewardPointsGranted: event.rewardPointsGranted,
+      ),
+    );
+  }
+
+  void _handleGameRestarted(GameRestartedEvent event) {
+
+    // Only valid from gameEnd
+    if (state.value.phase != GamePhase.gameEnd) {
+      gameWarn(
+        'GameController',
+        'GAME_RESTARTED ignored — phase is ${state.value.phase}',
+      );
+      return;
+    }
+
+    final session = state.value.session;
+    if (session == null) return;
+
+    // Cancel any leftover timers from previous game
+    _cancelAllTimers();
+
+    _permanentErrorEmitted = false;
+    _lastAnsweredQuestionId = null;
+
+    final updatedSession = session.copyWith(
+      players: event.players,
+      currentRound: 0,
+    );
+
+    // gameEnd → lobby
+    _transitionTo(
+      GamePhase.lobby,
+      updater: (s) => s.copyWith(
+        session: updatedSession,
+        currentQuestion: null,
+        correctAnswer: null,
+        lastScoreDelta: null,
+        lastSpeedBonus: null,
+        lastStreakBonus: null,
+        topPlayers: [],
+        winnerPlayerId: null,
+        rewardPointsGranted: null,
+        answeredCount: 0,
+        errorMessage: null,
       ),
     );
   }
@@ -681,11 +803,21 @@ class GameController {
     state.value = newState;
   }
 
+  // Future<void> dispose() async {
+  //   _permanentErrorEmitted = false;
+  //   _cancelAllTimers();
+  //   await _sseService.disconnect();   // wait for SSE teardown
+  //   state.dispose();                  // dispose notifier last
+  // }
   Future<void> dispose() async {
     _permanentErrorEmitted = false;
     _cancelAllTimers();
-    await _sseService.disconnect();   // wait for SSE teardown
-    state.dispose();                  // dispose notifier last
+
+    // Disconnect SSE first so no more events arrive.
+    await _sseService.disconnect();
+
+    // ValueNotifier.dispose() is synchronous.
+    state.dispose();
   }
   
 }

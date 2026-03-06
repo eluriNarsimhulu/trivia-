@@ -1,3 +1,5 @@
+// project_folder/lib/core/models/game_session.dart
+
 /// Represents the shared game session — the same data structure
 /// all clients see after joining via a room code.
 ///

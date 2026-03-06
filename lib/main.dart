@@ -1,3 +1,4 @@
+// project_folder/lib/main.dart
 
 /// Application entry point.
 ///

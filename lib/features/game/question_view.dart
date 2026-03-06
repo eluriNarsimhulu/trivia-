@@ -1,3 +1,6 @@
+// project_folder/lib/features/game/question_view.dart
+
+
 /// QuestionView — displayed during questionActive and questionClosed phases.
 ///
 /// Architecture note:
@@ -58,36 +61,10 @@ class _QuestionViewState extends State<QuestionView> {
     final total    = state.totalPlayers;
     final answered = state.answeredCount;
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        // children: [
-        //   _QuestionHeader(
-        //     questionIndex: state.questionIndex,
-        //     roundNumber:   state.session?.currentRound ?? 0,
-        //     totalRounds:   state.session?.totalRounds ?? 0,
-        //   ),
-        //   const SizedBox(height: 16),
-        //   // _AnswerProgressBar(answered: answered, total: total),
-        //   _LiveAnswerProgress(stateNotifier: widget.stateNotifier),
-        //   const SizedBox(height: 20),
-        //   _QuestionCard(question: question),
-        //   const SizedBox(height: 24),
-        //   Expanded(
-        //     child: AnswerOptionsWidget(
-        //       question:       question,
-        //       selectedAnswer: _selectedAnswer,
-        //       isLocked:       _isLocked,
-        //       onAnswerSelected: _onAnswer,
-        //     ),
-        //   ),
-        //   if (_isLocked && state.phase == GamePhase.questionActive) ...[
-        //     const SizedBox(height: 16),
-        //     _AnswerLockedChip(),
-        //   ],
-        // ],
-        // In _QuestionViewState.build(), add timer between header and progress bar:
         children: [
           _QuestionHeader(
             questionIndex: state.questionIndex,
@@ -96,7 +73,6 @@ class _QuestionViewState extends State<QuestionView> {
           ),
           const SizedBox(height: 12),
 
-          // ← ADD THIS
           _QuestionTimer(
             totalSeconds: question.timerSeconds,
             isLocked:     _isLocked,
@@ -105,16 +81,17 @@ class _QuestionViewState extends State<QuestionView> {
 
           _LiveAnswerProgress(stateNotifier: widget.stateNotifier),
           const SizedBox(height: 20),
+
           _QuestionCard(question: question),
           const SizedBox(height: 24),
-          Expanded(
-            child: AnswerOptionsWidget(
-              question:         question,
-              selectedAnswer:   _selectedAnswer,
-              isLocked:         _isLocked,
-              onAnswerSelected: _onAnswer,
-            ),
+
+          AnswerOptionsWidget(
+            question:         question,
+            selectedAnswer:   _selectedAnswer,
+            isLocked:         _isLocked,
+            onAnswerSelected: _onAnswer,
           ),
+
           if (_isLocked && state.phase == GamePhase.questionActive) ...[
             const SizedBox(height: 16),
             _AnswerLockedChip(),

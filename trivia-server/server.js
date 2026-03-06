@@ -1,3 +1,5 @@
+// project_folder/trivia-server/server.js
+
 // Trivia Game Backend — entry point.
 //
 // Starts an Express server that:
@@ -62,19 +64,18 @@ const { sessions } = require('./store');   // expose sessions Map for shutdown
 process.on('SIGINT', () => {
   console.log('\n[Server] Shutting down — closing SSE connections...');
 
-  // Import sessions map directly for shutdown cleanup.
-  // This is the only place outside store.js that touches it directly.
   for (const session of sessions.values()) {
     for (const res of session.connections.values()) {
       try {
         res.end();
       } catch (_) {}
     }
+
     // Cancel any running game timers.
     if (session.timers.question)    clearTimeout(session.timers.question);
-    if (session.timers.answerCount) clearInterval(session.timers.answerCount);
-    if (session.timers.result)      clearTimeout(session.timers.result);      // ← add
-    if (session.timers.leaderboard) clearTimeout(session.timers.leaderboard); // ← add
+    if (session.timers.answerCount) clearTimeout(session.timers.answerCount);
+    if (session.timers.result)      clearTimeout(session.timers.result);
+    if (session.timers.leaderboard) clearTimeout(session.timers.leaderboard);
   }
 
   console.log('[Server] Done. Goodbye.');

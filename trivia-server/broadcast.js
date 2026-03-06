@@ -1,3 +1,5 @@
+// project_folder/trivia-server/broadcast.js
+
 // Broadcast engine — the single place that writes SSE events to clients.
 //
 // Architecture note:

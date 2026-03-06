@@ -1,3 +1,5 @@
+
+// project_folder/lib/core/models/game_events.dart
 /// Typed SSE event hierarchy.
 ///
 /// Architecture note:
@@ -23,6 +25,32 @@ import 'scoring.dart';
 
 sealed class GameEvent {
   const GameEvent();
+}
+
+
+// ---------------------------------------------------------------------------
+// GAME_RESTARTED
+// Broadcast by server when host restarts with same players.
+// All clients transition back to lobby — SSE stays connected.
+// ---------------------------------------------------------------------------
+class GameRestartedEvent extends GameEvent {
+  final String roomCode;
+  final List<Player> players;
+
+  const GameRestartedEvent({
+    required this.roomCode,
+    required this.players,
+  });
+
+  factory GameRestartedEvent.fromJson(Map<String, dynamic> json) {
+    final playerList = json['players'] as List;
+    return GameRestartedEvent(
+      roomCode: json['room_code'] as String,
+      players: List.unmodifiable(
+        playerList.map((p) => Player.fromJson(p as Map<String, dynamic>)),
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

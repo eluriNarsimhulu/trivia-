@@ -1,3 +1,6 @@
+// project_folder/lib/core/services/rest_service.dart
+
+
 /// RestService — concrete implementation of RestServiceInterface.
 ///
 /// Architecture note:
@@ -85,6 +88,15 @@ class RestService implements RestServiceInterface {
   }) async {
     final body = jsonEncode({'host_id': hostId});
     await _post('/sessions/$sessionId/start', body);
+  }
+
+  @override
+  Future<void> restartGame({
+    required String sessionId,
+    required String hostId,
+  }) async {
+    final body = jsonEncode({'host_id': hostId});
+    await _post('/sessions/$sessionId/restart', body);
   }
 
   /// Submits a player's answer for the current question.

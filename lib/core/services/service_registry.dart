@@ -1,3 +1,5 @@
+// project_folder/lib/core/services/service_registry.dart
+
 /// ServiceRegistry — single source of service instantiation.
 ///
 /// Architecture note:

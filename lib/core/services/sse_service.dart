@@ -1,3 +1,5 @@
+// project_folder/lib/core/services/sse_service.dart
+
 /// Manages the persistent SSE connection to the game server.
 ///
 /// ## Responsibilities
@@ -276,6 +278,8 @@ class SseService implements SseServiceInterface {
     switch (eventName) {
       case 'ROUND_COUNTDOWN':
         return RoundCountdownEvent.fromJson(json);
+      case 'GAME_RESTARTED':
+        return GameRestartedEvent.fromJson(json);
       case 'PLAYER_JOINED':
         return PlayerJoinedEvent.fromJson(json);
       case 'PLAYER_LEFT':

@@ -1,3 +1,5 @@
+// project_folder/lib/state/game_state.dart
+
 /// Immutable snapshot of the entire client-side game view at a point in time.
 ///
 /// This is the single source of truth that all UI widgets read from.
@@ -26,6 +28,7 @@ import '../core/models/question.dart';
 import '../core/models/scoring.dart';
 
 class GameState {
+  static const Object _clear = Object();
   // -- Identity --
   /// This client's own player record.
   final Player? currentPlayer;
@@ -107,26 +110,68 @@ class GameState {
     List<PlayerScore>? topPlayers,
     String? winnerPlayerId,
     int? rewardPointsGranted,
-    String? errorMessage,
+    Object? errorMessage = _clear,
   }) {
     return GameState(
-      currentPlayer:       currentPlayer ?? this.currentPlayer,
-      session:             session ?? this.session,
-      phase:               phase ?? this.phase,
-      scoringRules:        scoringRules ?? this.scoringRules,
-      currentQuestion:     currentQuestion ?? this.currentQuestion,
-      questionIndex:       questionIndex ?? this.questionIndex,
-      answeredCount:       answeredCount ?? this.answeredCount,
-      totalPlayers:        totalPlayers ?? this.totalPlayers,
-      correctAnswer:       correctAnswer ?? this.correctAnswer,
-      lastScoreDelta:      lastScoreDelta ?? this.lastScoreDelta,
-      lastSpeedBonus:      lastSpeedBonus ?? this.lastSpeedBonus,
-      lastStreakBonus:      lastStreakBonus ?? this.lastStreakBonus,
-      // topPlayers:          topPlayers ?? this.topPlayers,
-      topPlayers: topPlayers != null ? List.unmodifiable(topPlayers) : this.topPlayers,
-      winnerPlayerId:      winnerPlayerId ?? this.winnerPlayerId,
-      rewardPointsGranted: rewardPointsGranted ?? this.rewardPointsGranted,
-      errorMessage:        errorMessage ?? this.errorMessage,
+      currentPlayer: currentPlayer ?? this.currentPlayer,
+      session: session ?? this.session,
+      phase: phase ?? this.phase,
+      scoringRules: scoringRules ?? this.scoringRules,
+      currentQuestion: currentQuestion ?? this.currentQuestion,
+      questionIndex: questionIndex ?? this.questionIndex,
+      answeredCount: answeredCount ?? this.answeredCount,
+      totalPlayers: totalPlayers ?? this.totalPlayers,
+      correctAnswer: correctAnswer ?? this.correctAnswer,
+      lastScoreDelta: lastScoreDelta ?? this.lastScoreDelta,
+      lastSpeedBonus: lastSpeedBonus ?? this.lastSpeedBonus,
+      lastStreakBonus: lastStreakBonus ?? this.lastStreakBonus,
+      topPlayers: topPlayers != null
+          ? List.unmodifiable(topPlayers)
+          : this.topPlayers,
+      winnerPlayerId: winnerPlayerId ?? this.winnerPlayerId,
+      rewardPointsGranted:
+          rewardPointsGranted ?? this.rewardPointsGranted,
+      errorMessage: errorMessage == _clear
+          ? this.errorMessage
+          : errorMessage as String?,
     );
   }
+  // GameState copyWith({
+  //   Player? currentPlayer,
+  //   GameSession? session,
+  //   GamePhase? phase,
+  //   ScoringRules? scoringRules,
+  //   Question? currentQuestion,
+  //   int? questionIndex,
+  //   int? answeredCount,
+  //   int? totalPlayers,
+  //   String? correctAnswer,
+  //   int? lastScoreDelta,
+  //   int? lastSpeedBonus,
+  //   int? lastStreakBonus,
+  //   List<PlayerScore>? topPlayers,
+  //   String? winnerPlayerId,
+  //   int? rewardPointsGranted,
+  //   String? errorMessage,
+  // }) {
+  //   return GameState(
+  //     currentPlayer:       currentPlayer ?? this.currentPlayer,
+  //     session:             session ?? this.session,
+  //     phase:               phase ?? this.phase,
+  //     scoringRules:        scoringRules ?? this.scoringRules,
+  //     currentQuestion:     currentQuestion ?? this.currentQuestion,
+  //     questionIndex:       questionIndex ?? this.questionIndex,
+  //     answeredCount:       answeredCount ?? this.answeredCount,
+  //     totalPlayers:        totalPlayers ?? this.totalPlayers,
+  //     correctAnswer:       correctAnswer ?? this.correctAnswer,
+  //     lastScoreDelta:      lastScoreDelta ?? this.lastScoreDelta,
+  //     lastSpeedBonus:      lastSpeedBonus ?? this.lastSpeedBonus,
+  //     lastStreakBonus:      lastStreakBonus ?? this.lastStreakBonus,
+  //     // topPlayers:          topPlayers ?? this.topPlayers,
+  //     topPlayers: topPlayers != null ? List.unmodifiable(topPlayers) : this.topPlayers,
+  //     winnerPlayerId:      winnerPlayerId ?? this.winnerPlayerId,
+  //     rewardPointsGranted: rewardPointsGranted ?? this.rewardPointsGranted,
+  //     errorMessage:        errorMessage ?? this.errorMessage,
+  //   );
+  // }
 }

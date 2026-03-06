@@ -1,3 +1,5 @@
+// project_folder/lib/core/services/sse_service_interface.dart
+
 import '../models/game_events.dart';
 
 abstract class SseServiceInterface {

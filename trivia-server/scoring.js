@@ -1,3 +1,6 @@
+// project_folder/trivia-server/scoring.js
+
+
 // Server-authoritative scoring.
 // Flutter client displays whatever the server sends — no client calculation.
 //

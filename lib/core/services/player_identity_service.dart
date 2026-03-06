@@ -1,3 +1,6 @@
+// project_folder/lib/core/services/player_identity_service.dart
+
+
 /// PlayerIdentityService — manages persistent local player identity.
 ///
 /// Architecture note:

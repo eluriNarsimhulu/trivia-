@@ -1,3 +1,4 @@
+// project_folder/lib/features/lobby/player_list_widget.dart
 /// PlayerListWidget — displays the current roster of players in the lobby.
 ///
 /// Architecture note:

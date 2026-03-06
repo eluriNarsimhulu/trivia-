@@ -1,3 +1,5 @@
+// project_folder/trivia-server/routes/game.js
+
 // REST routes that trigger game actions.
 //   POST /sessions/:id/start   — host starts the game
 //   POST /sessions/:id/answers — player submits an answer
@@ -7,8 +9,39 @@
 const express              = require('express');
 const router               = express.Router();
 const { getSession }       = require('../store');
-const { startGame, submitAnswer } = require('../game');
+const { startGame, submitAnswer, restartGame } = require('../game');
 
+// ---------------------------------------------------------------------------
+// POST /sessions/:id/restart
+// Host restarts the game with the same players.
+//
+// Body:    { host_id }
+// Returns: 200 OK | 400/403/404/409
+// ---------------------------------------------------------------------------
+router.post('/:id/restart', (req, res) => {
+  const { id: sessionId } = req.params;
+  const { host_id }       = req.body;
+
+  if (!host_id) {
+    return res.status(400).json({ error: 'host_id is required.' });
+  }
+
+  const session = getSession(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found.' });
+  }
+
+  if (session.hostId !== host_id) {
+    return res.status(403).json({ error: 'Only the host can restart the game.' });
+  }
+
+  const result = restartGame(sessionId);
+  if (!result.ok) {
+    return res.status(409).json({ error: result.error });
+  }
+
+  return res.status(200).json({ status: 'restarted' });
+});
 // ---------------------------------------------------------------------------
 // POST /sessions/:id/start
 // Host triggers game start.

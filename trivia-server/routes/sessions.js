@@ -1,3 +1,5 @@
+// project_folder/trivia-server/routes/sessions.js
+
 // REST routes for session lifecycle.
 //   POST /sessions      — host creates a new session
 //   POST /sessions/join — player joins by room code

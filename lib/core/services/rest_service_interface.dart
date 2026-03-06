@@ -1,3 +1,5 @@
+// project_folder/lib/core/services/rest_service_interface.dart
+
 /// RestServiceInterface — contract for all client → server write operations.
 ///
 /// Separated into its own file so GameController imports only this interface,
@@ -21,6 +23,11 @@ abstract class RestServiceInterface {
   });
 
   Future<void> startGame({
+    required String sessionId,
+    required String hostId,
+  });
+
+  Future<void> restartGame({
     required String sessionId,
     required String hostId,
   });

@@ -1,3 +1,5 @@
+// project_folder/lib/features/lobby/join_session_dialog.dart
+
 /// JoinSessionDialog — modal for entering a room code.
 ///
 /// Architecture note:

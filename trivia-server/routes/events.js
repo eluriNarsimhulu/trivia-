@@ -1,3 +1,5 @@
+// project_folder/trivia-server/routes/events.js
+
 // SSE endpoint — GET /sessions/:id/events?playerId=...
 //
 // This is the heart of the real-time system.

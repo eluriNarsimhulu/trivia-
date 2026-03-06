@@ -1,3 +1,5 @@
+// project_folder/lib/features/game/leaderboard_widget.dart
+
 /// LeaderboardWidget — displayed during GamePhase.leaderboard and gameEnd.
 ///
 /// Architecture note:
@@ -16,12 +18,17 @@ class LeaderboardWidget extends StatefulWidget {
   final bool isFinal;
   final String? winnerPlayerId;
 
+  final bool isHost;              // ADD
+  final VoidCallback? onPlayAgain; // ADD
+
   const LeaderboardWidget({
     super.key,
     required this.players,
     required this.roundNumber,
     required this.isFinal,
     this.winnerPlayerId,
+    this.isHost = false,          // ADD
+    this.onPlayAgain,             // ADD
   });
 
   @override
@@ -105,7 +112,40 @@ class _LeaderboardWidgetState extends State<LeaderboardWidget>
               },
             ),
           ),
-          if (!widget.isFinal) ...[
+          if (widget.isFinal) ...[
+            const SizedBox(height: 20),
+
+            if (widget.isHost)
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: widget.onPlayAgain,
+                  icon: const Icon(Icons.replay_rounded),
+                  label: const Text(
+                    'Play Again',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE94560),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              )
+            else
+              const Text(
+                'Waiting for host to restart…',
+                style: TextStyle(color: Colors.white38, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+
+          ] else ...[
             const SizedBox(height: 16),
             const Center(
               child: Text(

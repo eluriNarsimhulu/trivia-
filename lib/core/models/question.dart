@@ -1,3 +1,5 @@
+
+// project_folder/lib/core/models/question.dart
 /// Immutable model for a single trivia question.
 ///
 /// Architecture note:

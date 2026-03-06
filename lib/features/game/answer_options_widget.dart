@@ -1,3 +1,6 @@
+// project_folder/lib/features/game/answer_options_widget.dart
+
+
 /// AnswerOptionsWidget — renders the correct input UI per QuestionType.
 ///
 /// Architecture note:
@@ -108,31 +111,29 @@ class _McqOptions extends StatelessWidget {
   //   );
   // }
   Widget build(BuildContext context) {
-    return Expanded(
-      child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        shrinkWrap: true,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 2.2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-        ),
-        itemCount: options.length,
-        itemBuilder: (_, index) {
-          final option = options[index];
-          final color = _optionColors[index % _optionColors.length];
-          final isChosen = selectedAnswer == option;
-
-          return _OptionButton(
-            label: option,
-            color: color,
-            isChosen: isChosen,
-            isLocked: isLocked,
-            onTap: () => onSelected(option),
-          );
-        },
+    return GridView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 2.2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
       ),
+      itemCount: options.length,
+      itemBuilder: (_, index) {
+        final option = options[index];
+        final color = _optionColors[index % _optionColors.length];
+        final isChosen = selectedAnswer == option;
+
+        return _OptionButton(
+          label: option,
+          color: color,
+          isChosen: isChosen,
+          isLocked: isLocked,
+          onTap: () => onSelected(option),
+        );
+      },
     );
   }
 }

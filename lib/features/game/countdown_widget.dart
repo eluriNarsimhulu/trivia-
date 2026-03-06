@@ -1,3 +1,5 @@
+// project_folder/lib/features/game/countdown_widget.dart
+
 /// CountdownWidget — displayed during GamePhase.countdown.
 ///
 /// Architecture note:

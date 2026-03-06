@@ -1,3 +1,5 @@
+// project_folder/trivia-server/game.js
+
 // Game engine — controls the entire game loop.
 //
 // Responsibilities:
@@ -31,7 +33,7 @@ const { SCORING_RULES, calculateScore }              = require('./scoring');
 // All durations are server-controlled — clients just react to events.
 // ---------------------------------------------------------------------------
 const COUNTDOWN_MS       = 3_000;   // "Get Ready" before each question
-const RESULT_REVEAL_MS   = 1_200;   // show correct answer before leaderboard
+const RESULT_REVEAL_MS   = 2_000;   // show correct answer before leaderboard
 const LEADERBOARD_MS     = 5_000;   // leaderboard display between rounds
 const QUESTIONS_PER_GAME = 5;       // how many questions per session
 
@@ -53,7 +55,8 @@ function startGame(sessionId) {
   if (session.players.size < 1) return { ok: false, error: 'No players in session.' };
 
   // Select a random subset of questions for this session.
-  session.questions = _selectQuestions(QUESTIONS_PER_GAME);
+  // session.questions = _selectQuestions(QUESTIONS_PER_GAME);
+  session.questions = _selectQuestions(session.totalRounds);
   session.phase     = 'countdown';
 
   console.log(
@@ -63,8 +66,13 @@ function startGame(sessionId) {
 
   // Broadcast GAME_START to all players simultaneously.
   // Flutter transitions: lobby → countdown on receiving this.
+  // broadcast(session, 'GAME_START', {
+  //   total_rounds:   session.questions.length,
+  //   question_count: session.questions.length,
+  //   scoring_rules:  SCORING_RULES,
+  // });
   broadcast(session, 'GAME_START', {
-    total_rounds:   session.questions.length,
+    total_rounds:   session.totalRounds,
     question_count: session.questions.length,
     scoring_rules:  SCORING_RULES,
   });
@@ -153,6 +161,10 @@ function _scheduleQuestion(session, questionIndex) {
 
   session.phase = 'countdown';
 
+  console.log(
+    `[Game] Broadcasting ROUND_COUNTDOWN before Q${questionIndex + 1} ` +
+    `in ${session.roomCode}`
+  );
   // Notify all clients to enter countdown phase before next question.
   // Flutter GameController handles 'ROUND_COUNTDOWN' → GamePhase.countdown.
   broadcast(session, 'ROUND_COUNTDOWN', {
@@ -218,18 +230,17 @@ function _openQuestion(session, questionIndex) {
  * Called when the question timer expires naturally.
  * Cleans up debounce interval then closes the question.
  */
+// _closeQuestion — called when timer expires naturally
 function _closeQuestion(session) {
   _clearTimer(session, 'answerCount');
+  // 'question' timer already fired naturally — no need to clear it
   _processQuestionEnd(session);
 }
 
-/**
- * Called when all players answer before the timer expires.
- * Cancels the timer early then closes the question.
- */
+// _closeQuestionEarly — called when all players answered
 function _closeQuestionEarly(session) {
-  _clearTimer(session, 'question');
-  _clearTimer(session, 'answerCount');
+  _clearTimer(session, 'question');    // cancel the expiry timer
+  _clearTimer(session, 'answerCount'); // cancel debounce
   _processQuestionEnd(session);
 }
 
@@ -244,14 +255,19 @@ function _closeQuestionEarly(session) {
 function _processQuestionEnd(session) {
   session.phase = 'questionClosed';
 
-  const currentQ   = session.questions[session.currentQuestionIndex];
-  const correctAns = currentQ.correct;
+  const currentQ    = session.questions[session.currentQuestionIndex];
+  const correctAns  = currentQ.correct;
   const leaderboard = _calculateAndApplyScores(session, currentQ);
 
-  // Send personalised Q_RESULT to every player.
+  // Diagnostic — confirms question count is correct.
+  console.log(
+    `[Game] _processQuestionEnd: index=${session.currentQuestionIndex} ` +
+    `total=${session.questions.length} ` +
+    `isLast=${session.currentQuestionIndex >= session.questions.length - 1}`
+  );
+
   for (const [playerId] of session.players) {
     const submission = session.answers.get(playerId);
-
     sendToPlayer(session, playerId, 'Q_RESULT', {
       correct_answer: correctAns,
       score_delta:    submission?._scoreDelta  ?? 0,
@@ -260,26 +276,18 @@ function _processQuestionEnd(session) {
     });
   }
 
-  // Step 1 — wait for result reveal, then show leaderboard.
   session.timers.result = setTimeout(() => {
     _broadcastLeaderboard(session, leaderboard);
 
     const isLastQuestion =
       session.currentQuestionIndex >= session.questions.length - 1;
 
-    console.log(
-      `[Game] Q${session.currentQuestionIndex + 1}/${session.questions.length} ` +
-      `complete. Last question: ${isLastQuestion}`
-    );
-
-    // Step 2 — wait for leaderboard display, then advance.
     session.timers.leaderboard = setTimeout(() => {
       if (isLastQuestion) {
         _endGame(session, leaderboard);
       } else {
-        // Advance index HERE — not inside _scheduleQuestion.
         const nextIndex = session.currentQuestionIndex + 1;
-        console.log(`[Game] Scheduling question ${nextIndex + 1}`);
+        console.log(`[Game] Advancing to question ${nextIndex + 1} of ${session.questions.length}`);
         _scheduleQuestion(session, nextIndex);
       }
     }, LEADERBOARD_MS);
@@ -421,26 +429,33 @@ function _endGame(session, finalLeaderboard) {
   const winner = finalLeaderboard[0];
 
   console.log(
-    `[Game] Game ended in ${session.roomCode}. ` +
-    `Winner: ${winner?.display_name ?? 'nobody'}`
+    `[Game] GAME_END in ${session.roomCode}. ` +
+    `Winner: ${winner?.display_name ?? 'nobody'}. ` +
+    `Total questions asked: ${session.currentQuestionIndex + 1}`
   );
 
   broadcast(session, 'GAME_END', {
-    final_leaderboard:    finalLeaderboard,
-    winner_player_id:     winner?.player_id ?? '',
+    final_leaderboard:     finalLeaderboard,
+    winner_player_id:      winner?.player_id ?? '',
     reward_points_granted: winner ? 500 : 0,
   });
 
-  // Clean up session from memory after a delay.
-  // Gives clients time to receive the GAME_END event before teardown.
+  // Increased from 10s to 60s — gives mobile clients time to receive
+  // GAME_END and gracefully disconnect before server cleanup.
+  // SSE reconnects on mobile can take 15-30s on poor networks.
   setTimeout(() => {
-    // Close all SSE connections gracefully.
+
+    _clearAllTimers(session);
+
     for (const res of session.connections.values()) {
       try { res.end(); } catch (_) {}
     }
+
     deleteSession(session.sessionId);
+
     console.log(`[Game] Session ${session.roomCode} removed from memory.`);
-  }, 10_000);
+
+  }, 60_000);
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +528,14 @@ function _clearTimer(session, name) {
   }
 }
 
+
+function _clearAllTimers(session) {
+  _clearTimer(session, 'question');
+  _clearTimer(session, 'answerCount');
+  _clearTimer(session, 'result');
+  _clearTimer(session, 'leaderboard');
+}
+
 /**
  * Returns the number of players with active SSE connections.
  * Used to determine "all answered" threshold.
@@ -526,4 +549,60 @@ function _connectedPlayerCount(session) {
   return count;
 }
 
-module.exports = { startGame, submitAnswer };
+
+/**
+ * Resets a completed session so the same players can play again.
+ * Keeps all players and SSE connections intact.
+ * Resets scores, answers, question state, and phase back to lobby.
+ *
+ * @param {string} sessionId
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function restartGame(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return { ok: false, error: 'Session not found.' };
+
+  // Only allow restart from ended state.
+  if (session.phase !== 'ended') {
+    return { ok: false, error: 'Game has not ended yet.' };
+  }
+
+  // Reset all game state — keep players and connections untouched.
+  session.questions            = [];
+  session.currentQuestionIndex = -1;
+  session.questionStartTime    = null;
+  session.answers              = new Map();
+  session.phase                = 'lobby';
+
+  // Reset all timers.
+  _clearAllTimers(session);
+
+  // Reset scores for all players — fresh game.
+  for (const [playerId] of session.players) {
+    session.scores.set(playerId, { total: 0, streak: 0, lastRank: null });
+  }
+
+  console.log(
+    `[Game] Session ${session.roomCode} restarted with ` +
+    `${session.players.size} player(s)`
+  );
+
+  // Broadcast GAME_RESTARTED to all connected clients.
+  // Flutter transitions all clients back to lobby phase on receiving this.
+  broadcast(session, 'GAME_RESTARTED', {
+    room_code: session.roomCode,
+    players:   Array.from(session.players.values()).map(p => ({
+      id:           p.id,
+      display_name: p.displayName,
+      is_host:      p.isHost,
+      is_connected: p.isConnected,
+    })),
+  });
+
+  return { ok: true };
+}
+
+// Add _clearAllTimers as a standalone helper (used by restartGame above):
+
+// Update exports:
+module.exports = { startGame, submitAnswer, restartGame };

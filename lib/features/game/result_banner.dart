@@ -1,3 +1,6 @@
+// project_folder/lib/features/game/result_banner.dart
+
+
 /// ResultBanner — displayed during GamePhase.roundResult.
 ///
 /// Architecture note:

@@ -1,3 +1,5 @@
+// project_folder/lib/core/models/game_phase.dart
+
 /// Represents every distinct phase the game can occupy.
 ///
 /// Architecture note:

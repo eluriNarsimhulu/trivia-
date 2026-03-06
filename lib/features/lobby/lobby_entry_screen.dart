@@ -1,3 +1,5 @@
+// project_folder/lib/features/lobby/lobby_entry_screen.dart
+
 /// LobbyEntryScreen — the first screen a player sees.
 ///
 /// Responsibilities (UI only):

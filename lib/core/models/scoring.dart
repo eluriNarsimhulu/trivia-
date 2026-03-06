@@ -1,3 +1,5 @@
+// project_folder/lib/core/models/scoring.dart
+
 /// ScoringRules: delivered once in GAME_START, constant for the session.
 /// PlayerScore: recreated on every LEADERBOARD and Q_RESULT event.
 ///

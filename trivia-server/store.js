@@ -1,3 +1,5 @@
+// project_folder/trivia-server/store.dart
+
 // In-memory session store.
 //
 // All game state lives here for the lifetime of the server process.

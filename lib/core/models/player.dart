@@ -1,3 +1,5 @@
+// project_folder/lib/core/models/player.dart
+
 /// Represents a single participant in a game session.
 ///
 /// Architecture note:

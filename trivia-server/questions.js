@@ -1,3 +1,5 @@
+// project_folder/trivia-server/questions.js
+
 // Embedded question bank for demo.
 // All question types match Flutter QuestionType enum values exactly:
 //   mcq, true_false, type_in, image_based

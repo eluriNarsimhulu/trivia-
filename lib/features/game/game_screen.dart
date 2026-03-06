@@ -1,3 +1,5 @@
+// project_folder/lib/features/game/game_screen.dart
+
 /// GameScreen — the root gameplay screen.
 ///
 /// Architecture note:
@@ -20,6 +22,7 @@ import 'countdown_widget.dart';
 import 'question_view.dart';
 import 'result_banner.dart';
 import 'leaderboard_widget.dart';
+import '../lobby/lobby_screen.dart';
 
 class GameScreen extends StatelessWidget {
   const GameScreen({super.key});
@@ -93,18 +96,21 @@ class GameScreen extends StatelessWidget {
       case GamePhase.leaderboard:
         return LeaderboardWidget(
           key: const ValueKey('leaderboard'),
-          players:     state.topPlayers,
+          players: state.topPlayers,
           roundNumber: state.session?.currentRound ?? 0,
-          isFinal:     false,
+          isFinal: false,
+          isHost: state.isHost,
         );
 
       case GamePhase.gameEnd:
         return LeaderboardWidget(
           key: const ValueKey('game-end'),
-          players:         state.topPlayers,
-          roundNumber:     state.session?.totalRounds ?? 0,
-          isFinal:         true,
-          winnerPlayerId:  state.winnerPlayerId,
+          players: state.topPlayers,
+          roundNumber: state.session?.totalRounds ?? 0,
+          isFinal: true,
+          winnerPlayerId: state.winnerPlayerId,
+          isHost: state.isHost,
+          onPlayAgain: controller.restartGame,
         );
 
       case GamePhase.error:

@@ -1,3 +1,5 @@
+// project_folder/lib/features/lobby/lobby_screen.dart
+
 /// LobbyScreen — the waiting room after joining a session.
 ///
 /// Responsibilities (UI only):
