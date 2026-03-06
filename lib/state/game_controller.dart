@@ -326,6 +326,8 @@ class GameController {
 
   void _onEvent(GameEvent event) {
     switch (event) {
+      case RoundCountdownEvent():
+        _handleRoundCountdown(event);
       case PlayerJoinedEvent():
         _handlePlayerJoined(event);
       case PlayerLeftEvent():
@@ -531,6 +533,16 @@ class GameController {
         ),
       );
     });
+  }
+
+  void _handleRoundCountdown(RoundCountdownEvent event) {
+    // Valid from leaderboard phase only — between rounds.
+    if (state.value.phase != GamePhase.leaderboard) {
+      gameWarn('GameController', 'ROUND_COUNTDOWN ignored — phase is ${state.value.phase}');
+      return;
+    }
+    _transitionTo(GamePhase.countdown);
+    _startCountdownTimer();
   }
 
   void _handleLeaderboard(LeaderboardEvent event) {

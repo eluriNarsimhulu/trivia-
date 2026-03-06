@@ -148,8 +148,17 @@ function submitAnswer(sessionId, questionId, playerId, answer) {
  * @param {number} questionIndex - 0-based index into session.questions
  */
 function _scheduleQuestion(session, questionIndex) {
-  // Clear any stale question timer before setting a new one.
+
   _clearTimer(session, 'question');
+
+  session.phase = 'countdown';
+
+  // Notify all clients to enter countdown phase before next question.
+  // Flutter GameController handles 'ROUND_COUNTDOWN' → GamePhase.countdown.
+  broadcast(session, 'ROUND_COUNTDOWN', {
+    duration_seconds: COUNTDOWN_MS / 1000,
+    next_question_index: questionIndex,
+  });
 
   session.timers.question = setTimeout(() => {
     _openQuestion(session, questionIndex);
@@ -235,49 +244,46 @@ function _closeQuestionEarly(session) {
 function _processQuestionEnd(session) {
   session.phase = 'questionClosed';
 
-  const currentQ    = session.questions[session.currentQuestionIndex];
-  const correctAns  = currentQ.correct;
+  const currentQ   = session.questions[session.currentQuestionIndex];
+  const correctAns = currentQ.correct;
   const leaderboard = _calculateAndApplyScores(session, currentQ);
 
-  // Send a personalised Q_RESULT to every player.
-  // Each player sees their own score delta — not a shared payload.
+  // Send personalised Q_RESULT to every player.
   for (const [playerId] of session.players) {
-    const playerScore = session.scores.get(playerId);
-    const submission  = session.answers.get(playerId);
-
-    // Player did not answer — zero delta.
-    const scoreDelta  = submission?._scoreDelta  ?? 0;
-    const speedBonus  = submission?._speedBonus  ?? 0;
-    const streakBonus = submission?._streakBonus ?? 0;
+    const submission = session.answers.get(playerId);
 
     sendToPlayer(session, playerId, 'Q_RESULT', {
       correct_answer: correctAns,
-      score_delta:    scoreDelta,
-      speed_bonus:    speedBonus,
-      streak_bonus:   streakBonus,
+      score_delta:    submission?._scoreDelta  ?? 0,
+      speed_bonus:    submission?._speedBonus  ?? 0,
+      streak_bonus:   submission?._streakBonus ?? 0,
     });
   }
 
-  // After the reveal delay, show the leaderboard.
-  // Flutter transitions: questionActive → questionClosed → roundResult on Q_RESULT
-  // Then: roundResult → leaderboard on LEADERBOARD
-  session.timers.question = setTimeout(() => {
+  // Step 1 — wait for result reveal, then show leaderboard.
+  session.timers.result = setTimeout(() => {
     _broadcastLeaderboard(session, leaderboard);
 
     const isLastQuestion =
       session.currentQuestionIndex >= session.questions.length - 1;
 
-    if (isLastQuestion) {
-      // Final leaderboard — end the game after display period.
-      session.timers.question = setTimeout(() => {
+    console.log(
+      `[Game] Q${session.currentQuestionIndex + 1}/${session.questions.length} ` +
+      `complete. Last question: ${isLastQuestion}`
+    );
+
+    // Step 2 — wait for leaderboard display, then advance.
+    session.timers.leaderboard = setTimeout(() => {
+      if (isLastQuestion) {
         _endGame(session, leaderboard);
-      }, LEADERBOARD_MS);
-    } else {
-      // More questions — schedule next countdown after leaderboard display.
-      session.timers.question = setTimeout(() => {
-        _scheduleQuestion(session, session.currentQuestionIndex + 1);
-      }, LEADERBOARD_MS);
-    }
+      } else {
+        // Advance index HERE — not inside _scheduleQuestion.
+        const nextIndex = session.currentQuestionIndex + 1;
+        console.log(`[Game] Scheduling question ${nextIndex + 1}`);
+        _scheduleQuestion(session, nextIndex);
+      }
+    }, LEADERBOARD_MS);
+
   }, RESULT_REVEAL_MS);
 }
 
@@ -360,33 +366,35 @@ function _buildLeaderboard(session) {
       displayName: player.displayName,
       totalScore:  score.total,
       streak:      score.streak,
-      lastRank:    score.lastRank ?? 999,
+      // Use null to signal "no previous rank" for first round.
+      lastRank:    score.lastRank ?? null,
     });
   }
 
-  // Sort descending by total score.
   entries.sort((a, b) => b.totalScore - a.totalScore);
 
-  // Assign ranks and calculate deltas.
   const result = entries.map((entry, index) => {
-    const newRank  = index + 1;
-    const rankDelta = (entry.lastRank ?? newRank) - newRank; // positive = moved up
+    const newRank = index + 1;
 
-    // Persist new rank for next round's delta calculation.
+    // First round: lastRank is null → delta is 0.
+    // Subsequent rounds: positive = moved up, negative = dropped.
+    const rankDelta = entry.lastRank === null
+      ? 0
+      : entry.lastRank - newRank;
+
     const score = session.scores.get(entry.playerId);
     if (score) score.lastRank = newRank;
 
     return {
-      player_id:   entry.playerId,
+      player_id:    entry.playerId,
       display_name: entry.displayName,
-      total_score: entry.totalScore,
-      rank:        newRank,
-      rank_delta:  rankDelta,
-      streak:      entry.streak,
+      total_score:  entry.totalScore,
+      rank:         newRank,
+      rank_delta:   rankDelta,
+      streak:       entry.streak,
     };
   });
 
-  // Return top 5 — Flutter leaderboard widget shows up to 5 entries.
   return result.slice(0, 5);
 }
 

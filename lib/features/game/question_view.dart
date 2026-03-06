@@ -12,7 +12,7 @@
 ///   No local "hasAnswered" bool is needed for locking — the phase is
 ///   the single source of truth. Local state only tracks the selected
 ///   answer for visual highlighting.
-
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/models/game_phase.dart';
@@ -62,23 +62,56 @@ class _QuestionViewState extends State<QuestionView> {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        // children: [
+        //   _QuestionHeader(
+        //     questionIndex: state.questionIndex,
+        //     roundNumber:   state.session?.currentRound ?? 0,
+        //     totalRounds:   state.session?.totalRounds ?? 0,
+        //   ),
+        //   const SizedBox(height: 16),
+        //   // _AnswerProgressBar(answered: answered, total: total),
+        //   _LiveAnswerProgress(stateNotifier: widget.stateNotifier),
+        //   const SizedBox(height: 20),
+        //   _QuestionCard(question: question),
+        //   const SizedBox(height: 24),
+        //   Expanded(
+        //     child: AnswerOptionsWidget(
+        //       question:       question,
+        //       selectedAnswer: _selectedAnswer,
+        //       isLocked:       _isLocked,
+        //       onAnswerSelected: _onAnswer,
+        //     ),
+        //   ),
+        //   if (_isLocked && state.phase == GamePhase.questionActive) ...[
+        //     const SizedBox(height: 16),
+        //     _AnswerLockedChip(),
+        //   ],
+        // ],
+        // In _QuestionViewState.build(), add timer between header and progress bar:
         children: [
           _QuestionHeader(
             questionIndex: state.questionIndex,
             roundNumber:   state.session?.currentRound ?? 0,
             totalRounds:   state.session?.totalRounds ?? 0,
           ),
-          const SizedBox(height: 16),
-          // _AnswerProgressBar(answered: answered, total: total),
+          const SizedBox(height: 12),
+
+          // ← ADD THIS
+          _QuestionTimer(
+            totalSeconds: question.timerSeconds,
+            isLocked:     _isLocked,
+          ),
+          const SizedBox(height: 12),
+
           _LiveAnswerProgress(stateNotifier: widget.stateNotifier),
           const SizedBox(height: 20),
           _QuestionCard(question: question),
           const SizedBox(height: 24),
           Expanded(
             child: AnswerOptionsWidget(
-              question:       question,
-              selectedAnswer: _selectedAnswer,
-              isLocked:       _isLocked,
+              question:         question,
+              selectedAnswer:   _selectedAnswer,
+              isLocked:         _isLocked,
               onAnswerSelected: _onAnswer,
             ),
           ),
@@ -198,6 +231,106 @@ class _AnswerProgressBar extends StatelessWidget {
             backgroundColor: Colors.white12,
             valueColor: const AlwaysStoppedAnimation(Color(0xFF26DE81)),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+// Add this widget to question_view.dart
+
+class _QuestionTimer extends StatefulWidget {
+  final int totalSeconds;
+  final bool isLocked; // stops the timer when question is closed
+
+  const _QuestionTimer({
+    required this.totalSeconds,
+    required this.isLocked,
+  });
+
+  @override
+  State<_QuestionTimer> createState() => _QuestionTimerState();
+}
+
+class _QuestionTimerState extends State<_QuestionTimer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animController;
+  late int _remaining;
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _remaining = widget.totalSeconds;
+
+    _animController = AnimationController(
+      vsync: this,
+      duration: Duration(seconds: widget.totalSeconds),
+    )..forward();
+
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (widget.isLocked) {
+        _ticker?.cancel();
+        return;
+      }
+      setState(() {
+        if (_remaining > 0) _remaining--;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  Color get _timerColor {
+    if (_remaining > 10) return const Color(0xFF26DE81);
+    if (_remaining > 5)  return const Color(0xFFF7B731);
+    return const Color(0xFFE94560);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        // Arc progress indicator
+        SizedBox(
+          width: 48,
+          height: 48,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimatedBuilder(
+                animation: _animController,
+                builder: (_, __) => CircularProgressIndicator(
+                  value: 1.0 - _animController.value,
+                  strokeWidth: 4,
+                  backgroundColor: Colors.white12,
+                  valueColor: AlwaysStoppedAnimation(_timerColor),
+                ),
+              ),
+              Center(
+                child: Text(
+                  '$_remaining',
+                  style: TextStyle(
+                    color:      _timerColor,
+                    fontSize:   16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          'seconds left',
+          style: TextStyle(color: _timerColor, fontSize: 13),
         ),
       ],
     );

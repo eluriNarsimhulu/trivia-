@@ -39,7 +39,7 @@ router.post('/', (req, res) => {
   });
 
   // Initialise host score record.
-  session.scores.set(host_id, { total: 0, streak: 0, lastRank: 1 });
+  session.scores.set(host_id, { total: 0, streak: 0, lastRank: null });
 
   console.log(`[Sessions] Created session ${session.roomCode} by ${display_name}`);
 
@@ -85,7 +85,7 @@ router.post('/join', (req, res) => {
   });
 
   if (!isRejoining) {
-    session.scores.set(player_id, { total: 0, streak: 0, lastRank: 999 });
+    session.scores.set(player_id, { total: 0, streak: 0, lastRank: null });
   }
 
   console.log(`[Sessions] ${display_name} joined ${session.roomCode}${isRejoining ? ' (rejoin)' : ''}`);

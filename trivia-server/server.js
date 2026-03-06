@@ -73,6 +73,8 @@ process.on('SIGINT', () => {
     // Cancel any running game timers.
     if (session.timers.question)    clearTimeout(session.timers.question);
     if (session.timers.answerCount) clearInterval(session.timers.answerCount);
+    if (session.timers.result)      clearTimeout(session.timers.result);      // ← add
+    if (session.timers.leaderboard) clearTimeout(session.timers.leaderboard); // ← add
   }
 
   console.log('[Server] Done. Goodbye.');

@@ -66,6 +66,8 @@ function createSession(sessionId, hostId, totalRounds) {
     timers: {
       question:    null,
       answerCount: null,
+      result:      null,     // ← add
+      leaderboard: null,     // ← add
     },
     totalRounds,
   };

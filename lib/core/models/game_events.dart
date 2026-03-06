@@ -216,3 +216,25 @@ class GameEndEvent extends GameEvent {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// ROUND_COUNTDOWN
+// Emitted before each question (including Q1 after GAME_START).
+// Tells all clients to enter countdown phase between rounds.
+// ---------------------------------------------------------------------------
+class RoundCountdownEvent extends GameEvent {
+  final int durationSeconds;
+  final int nextQuestionIndex;
+
+  const RoundCountdownEvent({
+    required this.durationSeconds,
+    required this.nextQuestionIndex,
+  });
+
+  factory RoundCountdownEvent.fromJson(Map<String, dynamic> json) {
+    return RoundCountdownEvent(
+      durationSeconds:    json['duration_seconds'] as int,
+      nextQuestionIndex:  json['next_question_index'] as int,
+    );
+  }
+}

@@ -274,6 +274,8 @@ class SseService implements SseServiceInterface {
   /// Returns null for unknown event names so the caller can log and skip.
   GameEvent? _parseEvent(String eventName, Map<String, dynamic> json) {
     switch (eventName) {
+      case 'ROUND_COUNTDOWN':
+        return RoundCountdownEvent.fromJson(json);
       case 'PLAYER_JOINED':
         return PlayerJoinedEvent.fromJson(json);
       case 'PLAYER_LEFT':
