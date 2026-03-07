@@ -648,17 +648,13 @@ Future<void> restartGame() async {
   }
 
   void _handleGameRestarted(GameRestartedEvent event) {
-    
     if (state.value.phase != GamePhase.gameEnd) {
-      gameWarn(
-        'GameController',
-        'GAME_RESTARTED ignored — phase is ${state.value.phase}',
-      );
+      gameWarn('GameController',
+          'GAME_RESTARTED ignored — phase is ${state.value.phase}');
       return;
     }
 
     _cancelAllTimers();
-
     _permanentErrorEmitted = false;
     _lastAnsweredQuestionId = null;
 
@@ -670,23 +666,27 @@ Future<void> restartGame() async {
       currentRound: 0,
     );
 
+    // Force transition: gameEnd → lobby (whitelisted in _canTransition).
     _transitionTo(
       GamePhase.lobby,
-      updater: (s) => s.copyWith(
-        session: updatedSession,
-        currentQuestion: null,
-        questionIndex: 0,
-        answeredCount: 0,
-        totalPlayers: 0,
-        correctAnswer: null,
-        lastScoreDelta: null,
-        lastSpeedBonus: null,
-        lastStreakBonus: null,
-        topPlayers: const [],
-        winnerPlayerId: null,
+      updater: (s) => GameState(
+        // Keep identity and session — reset everything else.
+        currentPlayer:       s.currentPlayer,
+        session:             updatedSession,
+        phase:               GamePhase.lobby,
+        errorMessage:        null,   // explicitly cleared
+        scoringRules:        null,
+        currentQuestion:     null,
+        questionIndex:       0,
+        answeredCount:       0,
+        totalPlayers:        0,
+        correctAnswer:       null,
+        lastScoreDelta:      null,
+        lastSpeedBonus:      null,
+        lastStreakBonus:      null,
+        topPlayers:          const [],
+        winnerPlayerId:      null,
         rewardPointsGranted: null,
-        scoringRules: null,
-        errorMessage: null,
       ),
     );
   }

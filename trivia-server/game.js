@@ -606,6 +606,53 @@ function restartGame(sessionId) {
   return { ok: true };
 }
 
+/**
+ * Resets the session back to lobby phase with the same players.
+ * Broadcasts GAME_RESTARTED so all Flutter clients return to lobby.
+ * SSE connections are kept alive — no reconnect needed.
+ */
+function restartGame(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return { ok: false, error: 'Session not found.' };
+
+  // Allow restart only from ended state.
+  if (session.phase !== 'ended') {
+    return { ok: false, error: 'Game has not ended yet.' };
+  }
+
+  // Clear all timers defensively.
+  _clearAllTimers(session);
+
+  // Reset session state back to lobby.
+  session.phase                = 'lobby';
+  session.questions            = [];
+  session.currentQuestionIndex = -1;
+  session.questionStartTime    = null;
+  session.answers              = new Map();
+
+  // Reset all player scores but keep the players in the session.
+  for (const [playerId] of session.scores) {
+    session.scores.set(playerId, { total: 0, streak: 0, lastRank: null });
+  }
+
+  console.log(`[Game] Restarting ${session.roomCode} back to lobby`);
+
+  // Serialize current player list for the event payload.
+  const players = Array.from(session.players.values()).map(p => ({
+    id:           p.id,
+    display_name: p.displayName,
+    is_host:      p.isHost,
+    is_connected: p.isConnected,
+  }));
+
+  // Broadcast to ALL clients — Flutter transitions gameEnd → lobby.
+  broadcast(session, 'GAME_RESTARTED', {
+    players,
+  });
+
+  return { ok: true };
+}
+
 // Add _clearAllTimers as a standalone helper (used by restartGame above):
 
 // Update exports:

@@ -296,6 +296,8 @@ class SseService implements SseServiceInterface {
         return LeaderboardEvent.fromJson(json);
       case 'GAME_END':
         return GameEndEvent.fromJson(json);
+      case 'GAME_RESTARTED':
+        return GameRestartedEvent.fromJson(json);
       default:
         return null;
     }

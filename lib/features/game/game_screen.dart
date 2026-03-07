@@ -34,6 +34,15 @@ class GameScreen extends StatelessWidget {
     return ValueListenableBuilder<GameState>(
       valueListenable: controller.state,
       builder: (context, state, _) {
+        if (state.phase == GamePhase.lobby) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const LobbyScreen()),
+              );
+            }
+          });
+        }
         return PopScope(
           canPop: false, // back button disabled during active game
           child: Scaffold(
@@ -105,12 +114,14 @@ class GameScreen extends StatelessWidget {
       case GamePhase.gameEnd:
         return LeaderboardWidget(
           key: const ValueKey('game-end'),
-          players: state.topPlayers,
-          roundNumber: state.session?.totalRounds ?? 0,
-          isFinal: true,
-          winnerPlayerId: state.winnerPlayerId,
-          isHost: state.isHost,
-          onPlayAgain: controller.restartGame,
+          players:         state.topPlayers,
+          roundNumber:     state.session?.totalRounds ?? 0,
+          isFinal:         true,
+          winnerPlayerId:  state.winnerPlayerId,
+          isHost:          state.isHost,           // ← already there
+          onPlayAgain:     state.isHost            // ← wire the callback
+              ? () => controller.restartGame()
+              : null,
         );
 
       case GamePhase.error:

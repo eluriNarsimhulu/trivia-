@@ -27,31 +27,49 @@ sealed class GameEvent {
   const GameEvent();
 }
 
+// ---------------------------------------------------------------------------
+// GAME_RESTARTED
+// Broadcast when host restarts. All clients return to lobby.
+// SSE connection stays open — no reconnect needed.
+// ---------------------------------------------------------------------------
+class GameRestartedEvent extends GameEvent {
+  final List<Player> players;
 
+  const GameRestartedEvent({required this.players});
+
+  factory GameRestartedEvent.fromJson(Map<String, dynamic> json) {
+    final list = json['players'] as List? ?? [];
+    return GameRestartedEvent(
+      players: List.unmodifiable(
+        list.map((p) => Player.fromJson(p as Map<String, dynamic>)),
+      ),
+    );
+  }
+}
 // ---------------------------------------------------------------------------
 // GAME_RESTARTED
 // Broadcast by server when host restarts with same players.
 // All clients transition back to lobby — SSE stays connected.
 // ---------------------------------------------------------------------------
-class GameRestartedEvent extends GameEvent {
-  final String roomCode;
-  final List<Player> players;
+// class GameRestartedEvent extends GameEvent {
+//   final String roomCode;
+//   final List<Player> players;
 
-  const GameRestartedEvent({
-    required this.roomCode,
-    required this.players,
-  });
+//   const GameRestartedEvent({
+//     required this.roomCode,
+//     required this.players,
+//   });
 
-  factory GameRestartedEvent.fromJson(Map<String, dynamic> json) {
-    final playerList = json['players'] as List;
-    return GameRestartedEvent(
-      roomCode: json['room_code'] as String,
-      players: List.unmodifiable(
-        playerList.map((p) => Player.fromJson(p as Map<String, dynamic>)),
-      ),
-    );
-  }
-}
+//   factory GameRestartedEvent.fromJson(Map<String, dynamic> json) {
+//     final playerList = json['players'] as List;
+//     return GameRestartedEvent(
+//       roomCode: json['room_code'] as String,
+//       players: List.unmodifiable(
+//         playerList.map((p) => Player.fromJson(p as Map<String, dynamic>)),
+//       ),
+//     );
+//   }
+// }
 
 // ---------------------------------------------------------------------------
 // PLAYER_JOINED
