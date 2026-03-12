@@ -32,10 +32,32 @@ abstract class RestServiceInterface {
     required String hostId,
   });
 
+  Future<void> cancelSession({
+    required String sessionId,
+    required String hostId,
+  });
+
   Future<void> submitAnswer({
     required String sessionId,
     required String questionId,
     required String playerId,
     required String answer,
   });
+}
+
+class RestException implements Exception {
+  final String message;
+  final int? statusCode;
+  final bool isIgnorable;
+
+  const RestException(
+    this.message, {
+    this.statusCode,
+    this.isIgnorable = false,
+  });
+
+  @override
+  String toString() {
+    return 'RestException($statusCode): $message';
+  }
 }

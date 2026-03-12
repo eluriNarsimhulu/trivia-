@@ -23,6 +23,7 @@ import '../../state/game_state.dart';
 import '../../core/models/game_phase.dart';
 import 'player_list_widget.dart';
 import '../game/game_screen.dart';
+import '../lobby/lobby_entry_screen.dart';
 
 class LobbyScreen extends StatelessWidget {
   const LobbyScreen({super.key});
@@ -37,7 +38,22 @@ class LobbyScreen extends StatelessWidget {
       builder: (context, state, _) {
         // React to phase changes — navigate away when game starts.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          _handlePhaseTransition(context, state.phase);
+          if (!context.mounted) return;
+
+          // Navigate to GameScreen when game starts
+          if (state.phase == GamePhase.countdown) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const GameScreen()),
+            );
+          }
+
+          // Navigate back to entry screen if session ended or left
+          if (state.phase == GamePhase.initial) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const LobbyEntryScreen()),
+              (route) => false,
+            );
+          }
         });
 
         final session = state.session;
@@ -54,7 +70,7 @@ class LobbyScreen extends StatelessWidget {
           canPop: false,
           onPopInvokedWithResult: (didPop, _) async {
             if (!didPop) {
-              await _confirmLeave(context, controller);
+              await _handleLeavePressed(context, controller, state);
             }
           },
           child: Scaffold(
@@ -66,10 +82,11 @@ class LobbyScreen extends StatelessWidget {
               actions: [
                 IconButton(
                   icon: const Icon(Icons.exit_to_app),
-                  tooltip: 'Leave session',
-                  onPressed: () => _confirmLeave(context, controller),
+                  tooltip: state.isHost ? 'Cancel room' : 'Leave room',
+                  onPressed: () => _handleLeavePressed(context, controller, state),
                 ),
               ],
+
             ),
             body: SafeArea(
               child: Padding(
@@ -113,48 +130,111 @@ class LobbyScreen extends StatelessWidget {
   //     // TODO(Stage 6): replace with named route or GameScreen push.
   //     debugPrint('[LobbyScreen] Game started — navigate to GameScreen.');
   //   }
+  // // }
+  // void _handlePhaseTransition(BuildContext context, GamePhase phase) {
+  //   if (!context.mounted) return;
+
+  //   if (phase == GamePhase.countdown) {
+  //     Navigator.of(context).pushReplacement(
+  //       MaterialPageRoute(builder: (_) => const GameScreen()),
+  //     );
+  //   }
   // }
-  void _handlePhaseTransition(BuildContext context, GamePhase phase) {
-    if (!context.mounted) return;
 
-    if (phase == GamePhase.countdown) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const GameScreen()),
-      );
-    }
-  }
+  // Future<void> _confirmLeave(
+  //   BuildContext context,
+  //   GameController controller,
+  // ) async {
+  //   final confirmed = await showDialog<bool>(
+  //     context: context,
+  //     builder: (ctx) => AlertDialog(
+  //       backgroundColor: const Color(0xFF16213E),
+  //       title: const Text('Leave session?',
+  //           style: TextStyle(color: Colors.white)),
+  //       content: const Text(
+  //         'You will be removed from the game.',
+  //         style: TextStyle(color: Colors.white70),
+  //       ),
+  //       actions: [
+  //         TextButton(
+  //           onPressed: () => Navigator.pop(ctx, false),
+  //           child: const Text('Stay', style: TextStyle(color: Colors.white54)),
+  //         ),
+  //         TextButton(
+  //           onPressed: () => Navigator.pop(ctx, true),
+  //           child: const Text('Leave',
+  //               style: TextStyle(color: Color(0xFFE94560))),
+  //         ),
+  //       ],
+  //     ),
+  //   );
 
-  Future<void> _confirmLeave(
+  //   if (confirmed == true && context.mounted) {
+  //     await controller.leaveSession();
+  //     if (context.mounted) Navigator.of(context).pop();
+  //   }
+  // }
+  Future<void> _handleLeavePressed(
     BuildContext context,
     GameController controller,
+    GameState state,
   ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF16213E),
-        title: const Text('Leave session?',
-            style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'You will be removed from the game.',
-          style: TextStyle(color: Colors.white70),
+    if (state.isHost) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF16213E),
+          title: const Text('Cancel Room?',
+              style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'This will remove the room for all players.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Stay',
+                  style: TextStyle(color: Colors.white54)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Cancel Room',
+                  style: TextStyle(color: Color(0xFFE94560))),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Stay', style: TextStyle(color: Colors.white54)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Leave',
-                style: TextStyle(color: Color(0xFFE94560))),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (confirmed == true && context.mounted) {
+      if (confirmed != true || !context.mounted) return;
+      await controller.cancelSession();
+    } else {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF16213E),
+          title: const Text('Leave Room?',
+              style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'You will be removed from the game.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Stay',
+                  style: TextStyle(color: Colors.white54)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Leave',
+                  style: TextStyle(color: Color(0xFFE94560))),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true || !context.mounted) return;
       await controller.leaveSession();
-      if (context.mounted) Navigator.of(context).pop();
     }
   }
 }

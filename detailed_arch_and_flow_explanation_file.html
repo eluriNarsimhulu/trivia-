@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trivia Game — Architecture & API Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #111118;
+    --border:   #1e1e2e;
+    --host:     #f97316;
+    --p1:       #3b82f6;
+    --p2:       #a855f7;
+    --server:   #10b981;
+    --memory:   #f59e0b;
+    --sse:      #06b6d4;
+    --rest:     #84cc16;
+    --dim:      #4a4a6a;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    padding: 32px 24px 80px;
+  }
+
+  h1 {
+    font-size: clamp(22px, 4vw, 36px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    margin-bottom: 40px;
+  }
+
+  /* ── TAB NAV ── */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+  }
+
+  .tab {
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+  .tab:hover { color: var(--text); border-color: var(--dim); }
+  .tab.active {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+    font-weight: 700;
+  }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── ARCH DIAGRAM ── */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr 60px 1fr;
+    gap: 0;
+    align-items: start;
+    margin-bottom: 40px;
+  }
+
+  .layer-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .layer-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-align: center;
+  }
+
+  .node {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: var(--surface);
+    position: relative;
+  }
+
+  .node-title {
+    font-weight: 700;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+
+  .node-sub {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .node.host   { border-color: var(--host); }
+  .node.p1     { border-color: var(--p1);   }
+  .node.p2     { border-color: var(--p2);   }
+  .node.server { border-color: var(--server); }
+  .node.memory { border-color: var(--memory); }
+
+  .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .dot.host   { background: var(--host);   }
+  .dot.p1     { background: var(--p1);     }
+  .dot.p2     { background: var(--p2);     }
+  .dot.server { background: var(--server); }
+  .dot.memory { background: var(--memory); }
+  .dot.sse    { background: var(--sse);    }
+  .dot.rest   { background: var(--rest);   }
+
+  .arrow-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-top: 54px;
+    gap: 8px;
+  }
+
+  .arrow-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    text-align: center;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    letter-spacing: 0.08em;
+  }
+
+  .arrow-line {
+    width: 2px;
+    flex: 1;
+    min-height: 80px;
+    background: linear-gradient(to bottom, var(--rest), var(--sse));
+    opacity: 0.5;
+  }
+
+  /* ── LEGEND ── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 32px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  .legend-line {
+    width: 24px;
+    height: 2px;
+    border-radius: 1px;
+  }
+
+  /* ── FLOW STEPS ── */
+  .phase-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 28px 0 16px;
+  }
+
+  .phase-badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  .phase-name {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .step {
+    display: grid;
+    grid-template-columns: 160px 70px 1fr;
+    align-items: center;
+    gap: 0;
+    position: relative;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .step:hover { opacity: 0.85; }
+  .step:hover .step-detail { display: block; }
+
+  .step-actor {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    padding: 9px 14px;
+    border-radius: 6px 0 0 6px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+  }
+
+  .step-type {
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    padding: 9px 8px;
+    text-align: center;
+    letter-spacing: 0.06em;
+  }
+
+  .step-desc {
+    padding: 9px 14px;
+    font-size: 12px;
+    border-radius: 0 6px 6px 0;
+    line-height: 1.4;
+  }
+
+  .step-detail {
+    display: none;
+    grid-column: 1 / -1;
+    background: #1a1a2a;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: #94a3b8;
+    line-height: 1.7;
+    margin-top: 2px;
+    margin-bottom: 4px;
+  }
+
+  /* actor colours */
+  .actor-host   { background: #f9731614; color: var(--host); }
+  .actor-p1     { background: #3b82f614; color: var(--p1);   }
+  .actor-p2     { background: #a855f714; color: var(--p2);   }
+  .actor-server { background: #10b98114; color: var(--server); }
+  .actor-all    { background: #06b6d414; color: var(--sse);  }
+
+  .type-rest { color: var(--rest); background: #84cc1610; }
+  .type-sse  { color: var(--sse);  background: #06b6d410; }
+
+  .desc-rest { background: #84cc1608; }
+  .desc-sse  { background: #06b6d408; }
+  .desc-server { background: #10b98108; }
+
+  /* ── INFRA TABLE ── */
+  .infra-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .infra-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+
+  .infra-card-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .infra-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .infra-stat:last-child { border-bottom: none; }
+
+  .infra-val {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--server);
+  }
+
+  /* ── MEMORY DIAGRAM ── */
+  .mem-box {
+    background: var(--surface);
+    border: 1px solid var(--memory);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  .mem-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--memory);
+    margin-bottom: 14px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  .mem-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .mem-field {
+    background: #f59e0b0a;
+    border: 1px solid #f59e0b22;
+    border-radius: 6px;
+    padding: 8px 12px;
+  }
+
+  .mem-key {
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--memory);
+    margin-bottom: 2px;
+  }
+
+  .mem-val {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 32px 0;
+  }
+
+  @media (max-width: 700px) {
+    .arch-grid { grid-template-columns: 1fr; }
+    .arrow-col { display: none; }
+    .step { grid-template-columns: 120px 55px 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Trivia Game Architecture</h1>
+<p class="subtitle">// 3-player game walkthrough · SSE + REST · in-memory store</p>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('arch')">Architecture</button>
+  <button class="tab" onclick="showTab('flow')">API Flow</button>
+  <button class="tab" onclick="showTab('memory')">In-Memory DB</button>
+  <button class="tab" onclick="showTab('infra')">Infrastructure</button>
+</div>
+
+<!-- ════════════════════════════════════════════
+     PANEL 1 — ARCHITECTURE
+════════════════════════════════════════════ -->
+<div id="panel-arch" class="panel active">
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-line" style="background:var(--rest)"></div> REST (HTTP write)</div>
+    <div class="legend-item"><div class="legend-line" style="background:var(--sse); height:2px; border-top: 2px dashed var(--sse); background:none;"></div></div>
+    <div class="legend-item"><span style="font-family:Space Mono;font-size:9px;color:var(--sse);">─ ─ ─</span> SSE (push stream)</div>
+    <div class="legend-item"><span class="dot host"></span> Arjun (Host)</div>
+    <div class="legend-item"><span class="dot p1"></span> Bhanu (Player 1)</div>
+    <div class="legend-item"><span class="dot p2"></span> Charu (Player 2)</div>
+    <div class="legend-item"><span class="dot server"></span> Node.js Server</div>
+    <div class="legend-item"><span class="dot memory"></span> In-Memory Store</div>
+  </div>
+
+  <div class="arch-grid">
+    <!-- CLIENTS -->
+    <div class="layer-col">
+      <div class="layer-title">Flutter Clients</div>
+
+      <div class="node host">
+        <div class="node-title"><span class="dot host"></span>Arjun — Host</div>
+        <div class="node-sub">
+          GameController<br>
+          GameState (ValueNotifier)<br>
+          RestService → writes<br>
+          SseService → reads<br>
+          <br>
+          Phase: lobby → game
+        </div>
+      </div>
+
+      <div class="node p1">
+        <div class="node-title"><span class="dot p1"></span>Bhanu — Player 1</div>
+        <div class="node-sub">
+          Same Flutter app<br>
+          Joined via room code<br>
+          Cannot start/cancel<br>
+          Can submit answers
+        </div>
+      </div>
+
+      <div class="node p2">
+        <div class="node-title"><span class="dot p2"></span>Charu — Player 2</div>
+        <div class="node-sub">
+          Same Flutter app<br>
+          Joined via room code<br>
+          Cannot start/cancel<br>
+          Can submit answers
+        </div>
+      </div>
+    </div>
+
+    <!-- ARROW 1 -->
+    <div class="arrow-col">
+      <div class="arrow-label" style="color:var(--rest)">REST writes ↕</div>
+      <div class="arrow-line"></div>
+      <div class="arrow-label" style="color:var(--sse)">SSE push ↓</div>
+    </div>
+
+    <!-- SERVER -->
+    <div class="layer-col">
+      <div class="layer-title">Node.js / Express</div>
+
+      <div class="node server">
+        <div class="node-title"><span class="dot server"></span>REST Routes</div>
+        <div class="node-sub">
+          POST /sessions (create)<br>
+          POST /sessions/join<br>
+          POST /sessions/:id/start<br>
+          POST /sessions/:id/answers<br>
+          POST /sessions/:id/restart<br>
+          DELETE /sessions/:id
+        </div>
+      </div>
+
+      <div class="node server" style="border-color:#06b6d4">
+        <div class="node-title"><span class="dot sse"></span>SSE Endpoint</div>
+        <div class="node-sub">
+          GET /sessions/:id/events<br>
+          ?playerId=...<br>
+          <br>
+          One long-lived connection<br>
+          per player per session<br>
+          25s heartbeat keepalive
+        </div>
+      </div>
+
+      <div class="node server" style="border-color:var(--host)">
+        <div class="node-title" style="color:var(--host)">⚙ Game Engine</div>
+        <div class="node-sub">
+          game.js — orchestrates<br>
+          timing, scoring, loop<br>
+          broadcast.js — writes<br>
+          SSE frames to clients<br>
+          scoring.js — points
+        </div>
+      </div>
+    </div>
+
+    <!-- ARROW 2 -->
+    <div class="arrow-col">
+      <div class="arrow-label" style="color:var(--memory)">read/write ↕</div>
+      <div class="arrow-line" style="background:var(--memory); opacity:0.4"></div>
+    </div>
+
+    <!-- IN-MEMORY -->
+    <div class="layer-col">
+      <div class="layer-title">In-Memory Store</div>
+
+      <div class="node memory">
+        <div class="node-title"><span class="dot memory"></span>Session Object</div>
+        <div class="node-sub">
+          sessionId, roomCode<br>
+          hostId, phase<br>
+          questions[ ] (shuffled)<br>
+          currentQuestionIndex<br>
+          questionStartTime
+        </div>
+      </div>
+
+      <div class="node memory">
+        <div class="node-title"><span class="dot memory"></span>Players Map</div>
+        <div class="node-sub">
+          Map&lt;playerId, Player&gt;<br>
+          displayName, isHost<br>
+          isConnected (live flag)
+        </div>
+      </div>
+
+      <div class="node memory">
+        <div class="node-title"><span class="dot memory"></span>Scores Map</div>
+        <div class="node-sub">
+          Map&lt;playerId, Score&gt;<br>
+          total, streak, lastRank<br>
+          <br>
+          Answers Map (per Q)<br>
+          answer, submittedAt
+        </div>
+      </div>
+
+      <div class="node memory">
+        <div class="node-title"><span class="dot memory"></span>Connections Map</div>
+        <div class="node-sub">
+          Map&lt;playerId, res&gt;<br>
+          SSE response objects<br>
+          Broadcast writes here<br>
+          Auto-cleaned on close
+        </div>
+      </div>
+
+      <div class="node memory" style="opacity:0.5; border-style:dashed">
+        <div class="node-title">⚠ No Disk / No DB</div>
+        <div class="node-sub">
+          All data lost on restart<br>
+          Fine for session-scoped<br>
+          short-lived games
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════
+     PANEL 2 — API FLOW
+════════════════════════════════════════════ -->
+<div id="panel-flow" class="panel">
+
+  <p style="font-family:Space Mono;font-size:10px;color:var(--muted);margin-bottom:20px;">
+    Click any step to see details. REST = HTTP write from Flutter. SSE = server push to Flutter.
+  </p>
+
+  <!-- PHASE 1 -->
+  <div class="phase-header">
+    <span class="phase-badge" style="background:#f9731620;color:var(--host)">PHASE 1</span>
+    <span class="phase-name">Session Setup</span>
+  </div>
+  <div class="step-list">
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-host">ARJUN (Host)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions — creates the game room</div>
+      <div class="step-detail">
+        Arjun enters his name and taps "Create Game".<br>
+        Flutter sends: { host_id, display_name, total_rounds: 5 }<br>
+        Server creates a session in memory, generates a short room code (e.g. "XKQZ").<br>
+        Returns: { session_id, room_code } — Arjun's phone shows the code to share.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-host">ARJUN (Host)</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Opens SSE stream — now receives all game events</div>
+      <div class="step-detail">
+        Flutter opens a long-lived HTTP GET to /sessions/{id}/events?playerId=arjun.<br>
+        Server registers Arjun's connection in session.connections Map.<br>
+        Server sends ": connected" comment to confirm stream is live.<br>
+        This connection stays open for the entire game. No re-connecting needed between rounds.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-p1">BHANU (P1)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/join — joins by room code "XKQZ"</div>
+      <div class="step-detail">
+        Bhanu types the room code on his phone and taps "Join".<br>
+        Flutter sends: { room_code: "XKQZ", player_id, display_name: "Bhanu" }<br>
+        Server finds the session, adds Bhanu to session.players Map.<br>
+        Returns: full session snapshot { session_id, session: { players, phase, ... } }<br>
+        Bhanu's Flutter app builds its initial state from this snapshot.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-p1">BHANU (P1)</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Opens SSE stream — now in the game loop</div>
+      <div class="step-detail">
+        Bhanu's Flutter app opens its own SSE connection immediately after joining.<br>
+        Server registers his connection. Now session.connections has 2 entries.<br>
+        Server broadcasts PLAYER_JOINED to Arjun (not Bhanu — he already knows himself).<br>
+        Arjun's lobby screen updates to show "Bhanu joined".
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-p2">CHARU (P2)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/join — joins by room code "XKQZ"</div>
+      <div class="step-detail">
+        Same as Bhanu's join. Charu is added to session.players.<br>
+        Server broadcasts PLAYER_JOINED → Arjun's and Bhanu's phones both update.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-p2">CHARU (P2)</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Opens SSE stream — all 3 players now connected</div>
+      <div class="step-detail">
+        session.connections now has 3 entries: Arjun, Bhanu, Charu.<br>
+        From this point, every broadcast() call reaches all 3 phones simultaneously.<br>
+        The lobby shows all 3 player names. Arjun's "Start" button is now enabled (≥2 players).
+      </div>
+    </div>
+
+  </div>
+
+  <!-- PHASE 2 -->
+  <div class="phase-header">
+    <span class="phase-badge" style="background:#10b98120;color:var(--server)">PHASE 2</span>
+    <span class="phase-name">Game Start</span>
+  </div>
+  <div class="step-list">
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-host">ARJUN (Host)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/:id/start — triggers game begin</div>
+      <div class="step-detail">
+        Arjun taps "Start Game". Flutter sends: { host_id: arjun }.<br>
+        Server validates: caller is host, phase is lobby, ≥2 players present.<br>
+        Server shuffles questions (Fisher-Yates), selects 5 (or total_rounds count).<br>
+        Sets session.phase = 'active', session.currentQuestionIndex = 0.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Broadcasts GAME_START → all 3 phones</div>
+      <div class="step-detail">
+        Payload: { total_rounds: 5, scoring_rules: { base: 100, max_speed: 50, streak_step: 10 } }<br>
+        All 3 Flutter apps: initial → lobby (already) → now waiting for ROUND_COUNTDOWN.<br>
+        GameController sets scoringRules so the UI can show the scoring legend.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Broadcasts ROUND_COUNTDOWN → 3-second "Get Ready" screen</div>
+      <div class="step-detail">
+        Server schedules this immediately after GAME_START (no delay).<br>
+        Payload: { round_number: 1 }<br>
+        All 3 phones transition to countdown phase. A 3-second visual timer runs.<br>
+        The server waits 3 seconds then opens Question 1.
+      </div>
+    </div>
+
+  </div>
+
+  <!-- PHASE 3 -->
+  <div class="phase-header">
+    <span class="phase-badge" style="background:#3b82f620;color:var(--p1)">PHASE 3</span>
+    <span class="phase-name">One Question Round (repeats × 5)</span>
+  </div>
+  <div class="step-list">
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Broadcasts QUESTION → question appears on all 3 phones</div>
+      <div class="step-detail">
+        Payload: { question_id, type: "mcq", text: "...", options: [...], timer_seconds: 15 }<br>
+        Server records questionStartTime = Date.now() for speed-bonus calculation.<br>
+        All 3 Flutter apps: countdown → questionActive.<br>
+        A 15-second arc timer starts on each phone's screen.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-host">ARJUN (Host)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/:id/answers — submits his answer (3.2s in)</div>
+      <div class="step-detail">
+        Flutter sends: { question_id, player_id, answer: "Paris" }<br>
+        Server records: answers.set(arjun, { answer, submittedAt: Date.now() })<br>
+        Server calculates elapsed = submittedAt - questionStartTime = 3200ms.<br>
+        Answer is NOT scored yet — server waits for all players or timer expiry.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Broadcasts ANSWER_COUNT → live progress bar updates</div>
+      <div class="step-detail">
+        Payload: { answered: 1, total: 3 }<br>
+        Debounced at 500ms — if Bhanu and Charu also answer within 500ms, only one event fires.<br>
+        All phones show "1/3 answered" progress bar. No answer content revealed yet.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-p1">BHANU (P1)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/:id/answers — submits his answer (7.1s in)</div>
+      <div class="step-detail">
+        Bhanu taps an answer. Flutter records this and submits.<br>
+        Server now has 2/3 answers. ANSWER_COUNT debounce fires: { answered: 2, total: 3 }.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-p2">CHARU (P2)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/:id/answers — submits her answer (9.4s in)</div>
+      <div class="step-detail">
+        All 3 players have now answered. Server detects 3/3 — closes question early.<br>
+        (No need to wait for the 15-second timer to expire.)<br>
+        Server calculates scores for all 3 players simultaneously.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Sends Q_RESULT individually to each player (3 separate sends)</div>
+      <div class="step-detail">
+        This is NOT a broadcast — each player gets their own private result.<br>
+        Arjun: { correct_answer: "Paris", is_correct: true, score_delta: 147, speed_bonus: 47, streak_bonus: 0 }<br>
+        Bhanu: { correct_answer: "Paris", is_correct: true, score_delta: 130, speed_bonus: 30, streak_bonus: 0 }<br>
+        Charu: { correct_answer: "Paris", is_correct: false, score_delta: 0, ... }<br>
+        Each phone shows: correct answer highlighted + personal score breakdown banner.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Broadcasts LEADERBOARD → standings shown on all phones</div>
+      <div class="step-detail">
+        Payload: { round_number: 1, top_players: [{ player_id, display_name, total, rank, rank_delta, streak }] }<br>
+        rank_delta = how many positions each player moved vs last round.<br>
+        All 3 phones transition to leaderboard phase and show the ranked list.<br>
+        After 5 seconds, server sends ROUND_COUNTDOWN for round 2 and loop repeats.
+      </div>
+    </div>
+
+  </div>
+
+  <!-- PHASE 4 -->
+  <div class="phase-header">
+    <span class="phase-badge" style="background:#a855f720;color:var(--p2)">PHASE 4</span>
+    <span class="phase-name">Game End</span>
+  </div>
+  <div class="step-list">
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-server">SERVER</div>
+      <div class="step-type type-sse">SSE ←</div>
+      <div class="step-desc desc-sse">Broadcasts GAME_END → final screen on all phones</div>
+      <div class="step-detail">
+        After round 5 LEADERBOARD, server detects currentQuestionIndex = totalRounds.<br>
+        Broadcasts: { final_leaderboard: [...], winner_player_id: "arjun" }<br>
+        All 3 phones transition to gameEnd phase — final leaderboard with trophy icon shown.<br>
+        Host sees "Play Again" and "Leave" buttons. Players see "Leave" only.
+      </div>
+    </div>
+
+    <div class="step" onclick="this.querySelector('.step-detail').style.display=this.querySelector('.step-detail').style.display==='block'?'none':'block'">
+      <div class="step-actor actor-host">ARJUN (Host)</div>
+      <div class="step-type type-rest">REST →</div>
+      <div class="step-desc desc-rest">POST /sessions/:id/restart (optional) — plays again</div>
+      <div class="step-detail">
+        Arjun taps "Play Again". Flutter sends: { host_id: arjun }.<br>
+        Server: cancels the 60s cleanup timer, resets all scores + answers + questionIndex.<br>
+        Keeps same players and SSE connections — no reconnection needed.<br>
+        Broadcasts GAME_RESTARTED → all phones reset to lobby phase cleanly.
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════
+     PANEL 3 — IN-MEMORY DB
+════════════════════════════════════════════ -->
+<div id="panel-memory" class="panel">
+
+  <p style="font-family:Space Mono;font-size:10px;color:var(--muted);margin-bottom:20px;">
+    The entire game state for one session lives in a single JavaScript object in RAM. No disk, no database.
+  </p>
+
+  <div class="mem-box">
+    <div class="mem-title">SESSION OBJECT (one per active game)</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">sessionId</div>
+        <div class="mem-val">UUID — primary key</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">roomCode</div>
+        <div class="mem-val">"XKQZ" — what players type</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">hostId</div>
+        <div class="mem-val">UUID of Arjun</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">phase</div>
+        <div class="mem-val">lobby / active / ended</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">questions[ ]</div>
+        <div class="mem-val">5 shuffled question objects</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">currentQuestionIndex</div>
+        <div class="mem-val">0 → 4 as game progresses</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">questionStartTime</div>
+        <div class="mem-val">Date.now() when Q opens</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">totalRounds</div>
+        <div class="mem-val">5 (set by host)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mem-box">
+    <div class="mem-title">PLAYERS MAP — Map&lt;playerId, Player&gt;</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">arjun-uuid</div>
+        <div class="mem-val">{ id, displayName: "Arjun", isHost: true, isConnected: true }</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">bhanu-uuid</div>
+        <div class="mem-val">{ id, displayName: "Bhanu", isHost: false, isConnected: true }</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">charu-uuid</div>
+        <div class="mem-val">{ id, displayName: "Charu", isHost: false, isConnected: true }</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mem-box">
+    <div class="mem-title">SCORES MAP — Map&lt;playerId, Score&gt; — updates after each Q</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">arjun-uuid</div>
+        <div class="mem-val">{ total: 147, streak: 1, lastRank: 1 }</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">bhanu-uuid</div>
+        <div class="mem-val">{ total: 130, streak: 1, lastRank: 2 }</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">charu-uuid</div>
+        <div class="mem-val">{ total: 0, streak: 0, lastRank: 3 }</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mem-box">
+    <div class="mem-title">ANSWERS MAP — Map&lt;playerId, Answer&gt; — cleared each new Q</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">arjun-uuid</div>
+        <div class="mem-val">{ answer: "Paris", submittedAt: 1234567890 }</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">bhanu-uuid</div>
+        <div class="mem-val">{ answer: "Paris", submittedAt: 1234567898 }</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">charu-uuid</div>
+        <div class="mem-val">{ answer: "Berlin", submittedAt: 1234567901 }</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mem-box">
+    <div class="mem-title">CONNECTIONS MAP — Map&lt;playerId, SSE Response Object&gt;</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">arjun-uuid</div>
+        <div class="mem-val">Node.js HTTP res — broadcast writes here</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">bhanu-uuid</div>
+        <div class="mem-val">Node.js HTTP res — broadcast writes here</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">charu-uuid</div>
+        <div class="mem-val">Node.js HTTP res — broadcast writes here</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mem-box" style="border-color:var(--server);opacity:0.7">
+    <div class="mem-title" style="color:var(--server)">TIMERS MAP — active setTimeout handles</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">question</div>
+        <div class="mem-val">Fires when Q timer expires (closeQuestion)</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">result</div>
+        <div class="mem-val">Fires 2s after Q closes (send Q_RESULT)</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">leaderboard</div>
+        <div class="mem-val">Fires 5s after result (send LEADERBOARD)</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">cleanup</div>
+        <div class="mem-val">Fires 60s after GAME_END (deleteSession)</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════
+     PANEL 4 — INFRASTRUCTURE
+════════════════════════════════════════════ -->
+<div id="panel-infra" class="panel">
+
+  <p style="font-family:Space Mono;font-size:10px;color:var(--muted);margin-bottom:24px;">
+    Cost and resource estimate for production deployment.
+  </p>
+
+  <div class="infra-grid">
+
+    <div class="infra-card">
+      <div class="infra-card-title">Per Game Session</div>
+      <div class="infra-stat"><span>Session RAM</span><span class="infra-val">~5–10 KB</span></div>
+      <div class="infra-stat"><span>SSE connections</span><span class="infra-val">1 per player</span></div>
+      <div class="infra-stat"><span>REST calls (full game)</span><span class="infra-val">~20 total</span></div>
+      <div class="infra-stat"><span>SSE events (full game)</span><span class="infra-val">~30 broadcasts</span></div>
+      <div class="infra-stat"><span>Database</span><span class="infra-val">None needed</span></div>
+      <div class="infra-stat"><span>Session lifetime</span><span class="infra-val">~15 min average</span></div>
+    </div>
+
+    <div class="infra-card">
+      <div class="infra-card-title">Concurrent Sessions (1 server)</div>
+      <div class="infra-stat"><span>Comfortable cap</span><span class="infra-val">100 sessions</span></div>
+      <div class="infra-stat"><span>RAM at 100 sessions</span><span class="infra-val">~50 MB</span></div>
+      <div class="infra-stat"><span>SSE connections</span><span class="infra-val">~400–600</span></div>
+      <div class="infra-stat"><span>Node.js handles</span><span class="infra-val">10k+ connections</span></div>
+      <div class="infra-stat"><span>CPU usage</span><span class="infra-val">Very low (event-driven)</span></div>
+    </div>
+
+    <div class="infra-card">
+      <div class="infra-card-title">Hosting Cost</div>
+      <div class="infra-stat"><span>Render.com (current)</span><span class="infra-val">$7/month</span></div>
+      <div class="infra-stat"><span>RAM included</span><span class="infra-val">512 MB</span></div>
+      <div class="infra-stat"><span>Scale to Redis + 2 nodes</span><span class="infra-val">~$25/month</span></div>
+      <div class="infra-stat"><span>Database required</span><span class="infra-val">No</span></div>
+      <div class="infra-stat"><span>CDN required</span><span class="infra-val">No</span></div>
+    </div>
+
+    <div class="infra-card">
+      <div class="infra-card-title">Decoupling for Polarity</div>
+      <div class="infra-stat"><span>Integration type</span><span class="infra-val">iframe / SDK / API</span></div>
+      <div class="infra-stat"><span>Shared auth needed</span><span class="infra-val">player_id only</span></div>
+      <div class="infra-stat"><span>Custom branding</span><span class="infra-val">Yes (Flutter theme)</span></div>
+      <div class="infra-stat"><span>Deploy separately</span><span class="infra-val">Yes — standalone</span></div>
+      <div class="infra-stat"><span>Adds to Polarity infra</span><span class="infra-val">+1 small service</span></div>
+    </div>
+
+  </div>
+
+  <div class="mem-box" style="border-color:var(--server)">
+    <div class="mem-title" style="color:var(--server)">SCALING PATH — if Polarity grows</div>
+    <div class="mem-fields">
+      <div class="mem-field">
+        <div class="mem-key">Stage 1 (now)</div>
+        <div class="mem-val">Single Node process, in-memory store, $7/month</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">Stage 2</div>
+        <div class="mem-val">Replace store.js with Redis — zero other code changes</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">Stage 3</div>
+        <div class="mem-val">Add sticky-session load balancer — horizontal scale</div>
+      </div>
+      <div class="mem-field">
+        <div class="mem-key">Stage 4</div>
+        <div class="mem-val">Questions API / CMS — decouple questions from server code</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function showTab(name) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>

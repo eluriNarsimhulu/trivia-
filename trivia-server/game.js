@@ -55,8 +55,7 @@ function startGame(sessionId) {
   if (session.players.size < 1) return { ok: false, error: 'No players in session.' };
 
   // Select a random subset of questions for this session.
-  // session.questions = _selectQuestions(QUESTIONS_PER_GAME);
-  session.questions = _selectQuestions(session.totalRounds);
+  session.questions = _selectQuestions(Math.min(session.totalRounds, QUESTIONS.length));
   session.phase     = 'countdown';
 
   console.log(
@@ -561,50 +560,6 @@ function _connectedPlayerCount(session) {
  * @param {string} sessionId
  * @returns {{ ok: boolean, error?: string }}
  */
-function restartGame(sessionId) {
-  const session = getSession(sessionId);
-  if (!session) return { ok: false, error: 'Session not found.' };
-
-  // Only allow restart from ended state.
-  if (session.phase !== 'ended') {
-    return { ok: false, error: 'Game has not ended yet.' };
-  }
-
-  // Reset all timers.
-  _clearAllTimers(session);
-
-  // Reset all game state — keep players and connections untouched.
-  session.questions            = [];
-  session.currentQuestionIndex = -1;
-  session.questionStartTime    = null;
-  session.answers              = new Map();
-  session.phase                = 'lobby';
-
-
-  // Reset scores for all players — fresh game.
-  for (const [playerId] of session.players) {
-    session.scores.set(playerId, { total: 0, streak: 0, lastRank: null });
-  }
-
-  console.log(
-    `[Game] Session ${session.roomCode} restarted with ` +
-    `${session.players.size} player(s)`
-  );
-
-  // Broadcast GAME_RESTARTED to all connected clients.
-  // Flutter transitions all clients back to lobby phase on receiving this.
-  broadcast(session, 'GAME_RESTARTED', {
-    room_code: session.roomCode,
-    players:   Array.from(session.players.values()).map(p => ({
-      id:           p.id,
-      display_name: p.displayName,
-      is_host:      p.isHost,
-      is_connected: p.isConnected,
-    })),
-  });
-
-  return { ok: true };
-}
 
 /**
  * Resets the session back to lobby phase with the same players.

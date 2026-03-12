@@ -4,16 +4,62 @@
 //   POST /sessions      — host creates a new session
 //   POST /sessions/join — player joins by room code
 
-const express  = require('express');
-const { v4: uuidv4 } = require('uuid');
-const router   = express.Router();
-
 const {
   createSession,
+  getSession,
   getSessionByRoomCode,
   serializeSession,
   serializePlayer,
+  deleteSession,
 } = require('../store');
+
+const { broadcast } = require('../broadcast');
+const express       = require('express');
+const { v4: uuidv4 } = require('uuid');
+const router        = express.Router();
+
+
+
+// DELETE /sessions/:id?host_id=...
+// Host cancels the session from lobby. Notifies all players then cleans up.
+router.delete('/:id', (req, res) => {
+  const { id: sessionId } = req.params;
+  const { host_id }       = req.query;  // sent as query param: ?host_id=...
+
+  if (!host_id) {
+    return res.status(400).json({ error: 'host_id is required.' });
+  }
+
+  const session = getSession(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found.' });
+  }
+
+  if (session.hostId !== host_id) {
+    return res.status(403).json({ error: 'Only the host can cancel the session.' });
+  }
+
+  if (session.phase !== 'lobby') {
+    return res.status(409).json({ error: 'Can only cancel from lobby.' });
+  }
+
+  // Notify ALL connected players before closing.
+  broadcast(session, 'SESSION_CANCELLED', {
+    reason: 'Host left the room.',
+  });
+
+  // Give clients ~500ms to receive the event before closing connections.
+  setTimeout(() => {
+    for (const res of session.connections.values()) {
+      try { res.end(); } catch (_) {}
+    }
+    deleteSession(sessionId);
+    console.log(`[Sessions] Session ${session.roomCode} cancelled by host.`);
+  }, 500);
+
+  return res.status(200).json({ status: 'cancelled' });
+});
+
 
 // ---------------------------------------------------------------------------
 // POST /sessions

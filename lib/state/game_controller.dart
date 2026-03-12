@@ -30,14 +30,12 @@ import '../core/models/game_events.dart';
 import '../core/models/game_phase.dart';
 import '../core/models/game_session.dart';
 import '../core/models/player.dart';
-import '../core/services/rest_service.dart';
+
 import 'game_state.dart';
 import '../core/utils/logger.dart';
 
 import '../core/services/sse_service_interface.dart';
 import '../core/services/rest_service_interface.dart';
-
-// import '../core/services/rest_service_interface.dart';
 
 /// How long the "get ready" countdown runs before we expect the QUESTION event.
 const _kCountdownDuration = Duration(seconds: 3);
@@ -55,8 +53,11 @@ class GameController {
       ValueNotifier(GameState.initial());
 
   // Active timers — tracked so we can cancel safely.
+  // Active timers — tracked so we can cancel safely.
   Timer? _countdownTimer;
   Timer? _resultDelayTimer;
+  Timer? _sessionCancelledTimer;
+  StreamSubscription<GameEvent>? _eventSubscription;   // ← ADD THIS;
 
   // ---------------------------------------------------------------------------
   // Edge case tracking fields
@@ -106,9 +107,6 @@ class GameController {
     final currentPhase = state.value.phase;
 
     if (!_canTransition(currentPhase, newPhase)) {
-      // debugPrint(
-      //   '[GameController] ⛔ Illegal transition: $currentPhase → $newPhase — ignored.',
-      // );
       gameWarn(
         'GameController',
         'Illegal transition: $currentPhase → $newPhase — ignored.',
@@ -243,27 +241,6 @@ Future<void> restartGame() async {
     }
   }
 
-  /// Submits answer via REST. Rejected if phase is not questionActive.
-  // Future<void> submitAnswer({
-  //   required String questionId,
-  //   required String answer,
-  // }) async {
-  //   if (state.value.phase != GamePhase.questionActive) {
-  //     debugPrint('[GameController] submitAnswer() outside questionActive — ignored.');
-  //     return;
-  //   }
-  //   final session = state.value.session;
-  //   final player = state.value.currentPlayer;
-  //   if (session == null || player == null) return;
-
-  //   await _restService.submitAnswer(
-  //     sessionId:  session.sessionId,
-  //     questionId: questionId,
-  //     playerId:   player.id,
-  //     answer:     answer,
-  //   );
-  // }
-
   Future<void> submitAnswer({
     required String questionId,
     required String answer,
@@ -326,12 +303,41 @@ Future<void> restartGame() async {
 
   /// Leaves the session, cancels all timers, tears down SSE.
   Future<void> leaveSession() async {
-    // Reset the terminal error flag so a fresh session started after
-    // leaving is not incorrectly treated as already permanently failed.
+
     _permanentErrorEmitted = false;
+    _cancelAllTimers();
+    _lastAnsweredQuestionId = null;
+    await _eventSubscription?.cancel();   // ← ADD THIS
+    _eventSubscription = null;             // ← ADD THIS
+    await _sseService.disconnect();
+    _emit(GameState.initial());
+  }
+
+  Future<void> cancelSession() async {
+    if (!state.value.isHost) {
+      gameWarn('GameController', 'cancelSession() called by non-host — ignored.');
+      return;
+    }
+
+    if (!_guardSession() || !_guardPlayer()) return;
+
+    final session = state.value.session!;
+    final hostId  = state.value.currentPlayer!.id;
 
     _cancelAllTimers();
+
+    try {
+      await _restService.cancelSession(
+        sessionId: session.sessionId,
+        hostId: hostId,
+      );
+    } catch (e) {
+      gameError('GameController', 'cancelSession() REST error: $e');
+    }
+
+    // Server will broadcast SESSION_CANCELLED to others.
     await _sseService.disconnect();
+
     _emit(GameState.initial());
   }
 
@@ -343,8 +349,13 @@ Future<void> restartGame() async {
     required String sessionId,
     required String playerId,
   }) async {
+    // Cancel any existing subscription before opening a new one.
+    // Prevents double-firing if called twice (e.g. rejoin).
+    await _eventSubscription?.cancel();
+    _eventSubscription = null;
+
     await _sseService.connect(sessionId: sessionId, playerId: playerId);
-    _sseService.events.listen(
+    _eventSubscription = _sseService.events.listen(
       _onEvent,
       onError: _onSseError,
       cancelOnError: false,
@@ -377,26 +388,14 @@ Future<void> restartGame() async {
         _handleGameEnd(event);
       case GameRestartedEvent():          // ← ADD
         _handleGameRestarted(event);
+      case SessionCancelledEvent():
+        _handleSessionCancelled(event);
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // HANDLERS
   // ═══════════════════════════════════════════════════════════════════════════
-
-  // void _handlePlayerJoined(PlayerJoinedEvent event) {
-  //   // No phase restriction — players can join any time before game ends.
-  //   final session = state.value.session;
-  //   if (session == null) return;
-
-  //   final updatedPlayers = [
-  //     ...session.players.where((p) => p.id != event.player.id),
-  //     event.player,
-  //   ];
-  //   _emit(state.value.copyWith(
-  //     session: session.copyWith(players: List.unmodifiable(updatedPlayers)),
-  //   ));
-  // }
   void _handlePlayerJoined(PlayerJoinedEvent event) {
     // No phase restriction — players can reconnect at any point.
     final session = state.value.session;
@@ -565,19 +564,6 @@ Future<void> restartGame() async {
     });
   }
 
-  // void _handleRoundCountdown(RoundCountdownEvent event) {
-  //   if (state.value.phase != GamePhase.leaderboard) {
-  //     gameWarn('GameController',
-  //       'ROUND_COUNTDOWN ignored — phase is ${state.value.phase}');
-  //     return;
-  //   }
-
-  //   // leaderboard → countdown is whitelisted in _canTransition.
-  //   _transitionTo(GamePhase.countdown);
-
-  //   // Visual countdown only — server drives actual QUESTION timing.
-  //   _startCountdownTimer();
-  // }
   void _handleRoundCountdown(RoundCountdownEvent event) {
     final phase = state.value.phase;
 
@@ -599,32 +585,26 @@ Future<void> restartGame() async {
   }
 
   void _handleLeaderboard(LeaderboardEvent event) {
-  final session = state.value.session;
+    final session = state.value.session;
 
-  // Cancel any pending result-reveal delay.
-  // If LEADERBOARD arrives before the 1200ms result timer fires,
-  // we skip straight from questionClosed → leaderboard.
-  // This prevents Flutter getting stuck in questionClosed/roundResult
-  // when the server's timing is tight.
-  _cancelResultDelayTimer();
+    // Cancel any pending result-reveal delay.
+    // LEADERBOARD may arrive before the 1200ms client timer fires.
+    _cancelResultDelayTimer();
 
-  final currentPhase = state.value.phase;
+    final currentPhase = state.value.phase;
 
-  // Force the state machine through intermediate phases if needed.
-  // LEADERBOARD can arrive when Flutter is in:
-  //   - roundResult    (normal flow)
-  //   - questionClosed (server beat our 1200ms delay timer)
-  // In both cases we must reach leaderboard cleanly.
-  if (currentPhase == GamePhase.questionClosed) {
-      // Skip roundResult — jump directly.
-      // We must pass through it to satisfy the whitelist:
-      // questionClosed → roundResult → leaderboard
-      _emit(state.value.copyWith(
-        phase:          GamePhase.roundResult,
-        lastScoreDelta: state.value.lastScoreDelta,
-      ));
+    // If LEADERBOARD arrives while still in questionClosed, we need to step
+    // through roundResult first to satisfy the whitelist.
+    // Use _transitionTo so both steps are validated and logged.
+    if (currentPhase == GamePhase.questionClosed) {
+      _transitionTo(GamePhase.roundResult);   // validated: questionClosed → roundResult ✓
+      // If the transition was rejected for any reason, bail out.
+      if (state.value.phase != GamePhase.roundResult) return;
     }
 
+    // Now transition to leaderboard (from roundResult OR leaderboard is unreachable
+    // — the only valid paths are roundResult → leaderboard and questionClosed → leaderboard,
+    // both of which are in the whitelist).
     _transitionTo(
       GamePhase.leaderboard,
       updater: (s) => s.copyWith(
@@ -691,6 +671,35 @@ Future<void> restartGame() async {
     );
   }
 
+  void _handleSessionCancelled(SessionCancelledEvent event) {
+
+    // Ignore if already in a terminal or disconnected state.
+    // Accept from any active phase — host may quit mid-game.
+    final phase = state.value.phase;
+    if (phase == GamePhase.initial ||
+        phase == GamePhase.error   ||
+        phase == GamePhase.gameEnd) return;
+
+    _cancelAllTimers();
+    _permanentErrorEmitted = false;
+    _lastAnsweredQuestionId = null;
+
+    // Show banner message briefly
+    _emit(state.value.copyWith(
+      errorMessage: event.reason,
+    ));
+
+    // After short delay reset state
+    _sessionCancelledTimer?.cancel();
+
+    _sessionCancelledTimer = Timer(const Duration(seconds: 2), () async {
+      await _eventSubscription?.cancel();   // add this if you've applied BUG-03 fix
+      _eventSubscription = null;
+      await _sseService.disconnect();
+      _emit(GameState.initial());
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // COUNTDOWN TIMER
   // ═══════════════════════════════════════════════════════════════════════════
@@ -733,6 +742,9 @@ Future<void> restartGame() async {
   void _cancelAllTimers() {
     _cancelCountdownTimer();
     _cancelResultDelayTimer();
+
+    _sessionCancelledTimer?.cancel();
+    _sessionCancelledTimer = null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -803,24 +815,20 @@ Future<void> restartGame() async {
     state.value = newState;
   }
 
-  // Future<void> dispose() async {
-  //   _permanentErrorEmitted = false;
-  //   _cancelAllTimers();
-  //   await _sseService.disconnect();   // wait for SSE teardown
-  //   state.dispose();                  // dispose notifier last
-  // }
   Future<void> dispose() async {
     _permanentErrorEmitted = false;
     _cancelAllTimers();
-
-    // Disconnect SSE first so no more events arrive.
+    
+    await _eventSubscription?.cancel();   // ← ADD THIS
+    _eventSubscription = null;             // ← ADD THIS
     await _sseService.disconnect();
 
-    // ValueNotifier.dispose() is synchronous.
     state.dispose();
   }
   
 }
+
+
 // ```
 
 // ---

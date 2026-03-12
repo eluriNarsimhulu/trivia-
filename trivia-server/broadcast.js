@@ -24,12 +24,17 @@
  * @param {object} payload   - JSON-serializable payload
  */
 function broadcast(session, eventName, payload) {
-  const frame = buildFrame(eventName, payload);
+  const id    = ++_eventIdCounter;
+  const frame = buildFrameWithId(id, eventName, payload);
   let sent = 0;
+
+  // Keep a rolling log of the last 50 events for reconnect replay.
+  if (!session.eventLog) session.eventLog = [];
+  session.eventLog.push({ id, frame });
+  if (session.eventLog.length > 50) session.eventLog.shift(); // rolling window
 
   for (const [playerId, res] of session.connections) {
     if (res.writableEnded) {
-      // Connection is already closed — remove stale entry.
       session.connections.delete(playerId);
       continue;
     }
@@ -78,8 +83,18 @@ function sendToPlayer(session, playerId, eventName, payload) {
  * @param {object} payload
  * @returns {string} complete SSE frame ready to write to response
  */
+// Monotonic counter — increments globally across all sessions.
+// Fine for this in-memory server; a DB-backed server would use a
+// per-session sequence stored in the session object.
+
+let _eventIdCounter = 0;
+
+function buildFrameWithId(id, eventName, payload) {
+  return `id: ${id}\nevent: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
 function buildFrame(eventName, payload) {
-  // JSON.stringify is safe here — payload is always a plain object.
+  // Used by sendToPlayer — Q_RESULT is per-player, not logged (score is personal).
   return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 

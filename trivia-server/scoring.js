@@ -7,7 +7,10 @@
 // Formula:
 //   base:         100 points for a correct answer
 //   speed bonus:  up to 50 points — linear decay over question timer
-//   streak bonus: 10 points per consecutive correct answer (capped at 50)
+//   streak bonus: 10 points per streak level, capped at 50.
+//                 streak is the count BEFORE this answer is added.
+//                 So: 1st correct = 0 bonus, 2nd consecutive = +10, 3rd = +20, etc.
+//                 To award bonus from the 1st correct answer, increment streak before calling.
 
 const BASE_POINTS         = 100;
 const MAX_SPEED_BONUS     = 50;
@@ -26,7 +29,9 @@ const SCORING_RULES = {
  *
  * @param {number} elapsedMs    - how long the player took to answer (ms)
  * @param {number} timerSeconds - total time allowed for the question
- * @param {number} streak       - player's current consecutive correct count
+ * @param {number} streak       - consecutive correct count BEFORE this answer.
+ *                                Pass 0 on first correct, 1 on second, etc.
+ *                                Streak is incremented in game.js AFTER this call.
  * @returns {{ scoreDelta, speedBonus, streakBonus }}
  */
 function calculateScore(elapsedMs, timerSeconds, streak) {

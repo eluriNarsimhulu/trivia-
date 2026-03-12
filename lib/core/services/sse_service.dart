@@ -71,11 +71,15 @@ class SseService implements SseServiceInterface {
   /// Session params stored at connect() time — reused on every reconnect.
   String? _sessionId;
   String? _playerId;
-  String? _baseUrl;
+  // String? _baseUrl;
 
   /// Reconnect attempt counter. Reset to 0 on a successful connection.
   int _retryCount = 0;
 
+
+  /// The last SSE event `id:` value received from the server.
+  /// Sent as a query param on reconnect so the server can replay missed events.
+  String? _lastEventId;    // ← ADD THIS
   /// Set to true by disconnect(). Prevents reconnect loop from firing
   /// after an intentional teardown.
   bool _disconnected = false;
@@ -104,7 +108,7 @@ class SseService implements SseServiceInterface {
     // Store params for reconnect cycles.
     _sessionId = sessionId;
     _playerId = playerId;
-    _baseUrl = this.baseUrl;
+    // _baseUrl = this.baseUrl;
     _disconnected = false;
     _retryCount = 0;
 
@@ -136,17 +140,20 @@ class SseService implements SseServiceInterface {
 
     final sessionId = _sessionId;
     final playerId  = _playerId;
-    final baseUrl   = _baseUrl;
+    final baseUrl   = this.baseUrl;
 
     if (sessionId == null || playerId == null || baseUrl == null) {
       debugPrint('[SseService] connect() called without session params.');
       return;
     }
 
-    final uri = Uri.parse(
-      '$baseUrl/sessions/$sessionId/events?playerId=$playerId',
-    );
+    final lastId = _lastEventId;
 
+    final uri = Uri.parse(
+      '$baseUrl/sessions/$sessionId/events?playerId=$playerId'
+      '${lastId != null ? '&lastEventId=$lastId' : ''}',
+    );
+    
     debugPrint('[SseService] Connecting to $uri');
 
     try {
@@ -240,6 +247,12 @@ class SseService implements SseServiceInterface {
       return;
     }
 
+    // "id: 123" — used for replay on reconnect
+    if (line.startsWith('id:')) {
+      _lastEventId = line.substring(3).trim();
+      return;
+    }
+
     // Unknown field — ignore per RFC 8895.
     debugPrint('[SseService] Unknown SSE field, ignoring: $line');
   }
@@ -278,26 +291,37 @@ class SseService implements SseServiceInterface {
     switch (eventName) {
       case 'ROUND_COUNTDOWN':
         return RoundCountdownEvent.fromJson(json);
+
       case 'GAME_RESTARTED':
         return GameRestartedEvent.fromJson(json);
+
       case 'PLAYER_JOINED':
         return PlayerJoinedEvent.fromJson(json);
+
       case 'PLAYER_LEFT':
         return PlayerLeftEvent.fromJson(json);
+
       case 'GAME_START':
         return GameStartEvent.fromJson(json);
+
       case 'QUESTION':
         return QuestionEvent.fromJson(json);
+
       case 'ANSWER_COUNT':
         return AnswerCountEvent.fromJson(json);
+
       case 'Q_RESULT':
         return QuestionResultEvent.fromJson(json);
+
       case 'LEADERBOARD':
         return LeaderboardEvent.fromJson(json);
+
       case 'GAME_END':
         return GameEndEvent.fromJson(json);
-      case 'GAME_RESTARTED':
-        return GameRestartedEvent.fromJson(json);
+
+      case 'SESSION_CANCELLED':
+        return SessionCancelledEvent.fromJson(json);
+
       default:
         return null;
     }

@@ -99,6 +99,42 @@ class RestService implements RestServiceInterface {
     await _post('/sessions/$sessionId/restart', body);
   }
 
+  @override
+  Future<void> cancelSession({
+    required String sessionId,
+    required String hostId,
+  }) async {
+    // host_id sent as query param — DELETE body is stripped by many proxies.
+    await _deleteNoBody('/sessions/$sessionId?host_id=$hostId');
+  }
+
+  Future<void> _deleteNoBody(String path) async {
+    final uri = Uri.parse('$_baseUrl$path');
+    debugPrint('[RestService] DELETE $uri');
+
+    try {
+      final request = await _client.openUrl('DELETE', uri);
+      request.headers.contentType = ContentType.json;
+      // No body — host_id is in the query string.
+      final response = await request.close();
+      final responseBody = await response.transform(utf8.decoder).join();
+
+      debugPrint('[RestService] ${response.statusCode} $uri');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) return;
+
+      throw RestException(
+        statusCode: response.statusCode,
+        message: 'DELETE $path failed: ${response.statusCode}\n$responseBody',
+      );
+    } on SocketException catch (e) {
+      throw RestException(
+        statusCode: 0,
+        message: 'Network error on DELETE $path: $e',
+      );
+    }
+  }
+
   /// Submits a player's answer for the current question.
   ///
   /// Server validates:

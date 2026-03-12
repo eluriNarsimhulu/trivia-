@@ -34,6 +34,7 @@ class _LobbyEntryScreenState extends State<LobbyEntryScreen> {
   final _nameController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
+  bool _navigating = false;
 
   @override
   void dispose() {
@@ -127,7 +128,15 @@ class _LobbyEntryScreenState extends State<LobbyEntryScreen> {
         // We do this here rather than in the action methods so the
         // navigation is always driven by state — not by async call order.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (state.phase == GamePhase.lobby && ModalRoute.of(context)?.isCurrent == true && mounted) {
+          if (!mounted) return;
+          // If state resets to initial (e.g. leave/cancel), reset navigation flag.
+          if (state.phase == GamePhase.initial) {
+            _navigating = false;
+            return;
+          }
+          if (_navigating) return;
+          if (state.phase == GamePhase.lobby && ModalRoute.of(context)?.isCurrent == true) {
+            _navigating = true;
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(builder: (_) => const LobbyScreen()),
             );

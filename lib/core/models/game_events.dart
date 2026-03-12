@@ -46,6 +46,23 @@ class GameRestartedEvent extends GameEvent {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// SESSION_CANCELLED
+// Broadcast by server when host cancels the lobby.
+// All non-host clients must navigate back to LobbyEntryScreen.
+// ---------------------------------------------------------------------------
+class SessionCancelledEvent extends GameEvent {
+  final String reason;
+
+  const SessionCancelledEvent({required this.reason});
+
+  factory SessionCancelledEvent.fromJson(Map<String, dynamic> json) {
+    return SessionCancelledEvent(
+      reason: json['reason'] as String? ?? 'Session was cancelled.',
+    );
+  }
+}
 // ---------------------------------------------------------------------------
 // GAME_RESTARTED
 // Broadcast by server when host restarts with same players.

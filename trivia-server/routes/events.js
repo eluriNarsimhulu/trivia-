@@ -27,7 +27,7 @@ const { broadcast, sendToPlayer }     = require('../broadcast');
 // ---------------------------------------------------------------------------
 router.get('/:id/events', (req, res) => {
   const { id: sessionId } = req.params;
-  const { playerId }      = req.query;
+  const { playerId, lastEventId } = req.query;
 
   // -- Validate inputs --
   if (!playerId) {
@@ -59,18 +59,20 @@ router.get('/:id/events', (req, res) => {
   // Without this, some HTTP clients buffer until the first write.
   res.flushHeaders();
 
-  // -- Handle duplicate connection (reconnect) --
-  // If this player already has an open SSE connection, close the old one
-  // before registering the new one. This happens on mobile network switches
-  // or when the Flutter app reconnects after a drop.
+  //// -- Handle duplicate connection (reconnect) --
+  // If an existing live connection is found, close it before registering
+  // the new one. This prevents the momentary race where both are active.
   const existingConnection = session.connections.get(playerId);
-  if (existingConnection) {
-    console.log(`[SSE] ${player.displayName} replacing existing connection`);
+  if (existingConnection && !existingConnection.writableEnded) {
+    console.log(`[SSE] ${player.displayName} replacing live connection`);
     try {
+      // Flush a comment before ending so the client's onDone fires cleanly.
+      existingConnection.write(': replaced\n\n');
       existingConnection.end();
-    } catch (_) {
-      // Old connection may already be dead — safe to ignore.
-    }
+    } catch (_) {}
+    // Small synchronous pause is not possible in Node, but end() is immediate.
+    // The new registration below is safe because end() marks writableEnded=true
+    // synchronously, so the old close handler's identity check will fail.
   }
 
   // -- Register connection --
@@ -86,6 +88,21 @@ router.get('/:id/events', (req, res) => {
   // Confirms to the client that the stream is alive immediately.
   // Flutter SseService ignores comment lines (starts with ':') per RFC 8895.
   res.write(': connected\n\n');
+
+  // -- Replay missed events if client sent a lastEventId --
+  // This fires when a player reconnects after a network drop.
+  // We replay any buffered events with id > lastEventId so they
+  // don't get stuck in a stale phase.
+  if (lastEventId !== undefined) {
+    const sinceId = parseInt(lastEventId, 10);
+    if (!isNaN(sinceId)) {
+      const missed = (session.eventLog || []).filter(e => e.id > sinceId);
+      for (const entry of missed) {
+        res.write(entry.frame);
+      }
+      console.log(`[SSE] Replayed ${missed.length} missed event(s) to ${player.displayName}`);
+    }
+  }
 
   // -- Notify other players this player joined/reconnected --
   // Broadcast PLAYER_JOINED to everyone EXCEPT the joining player themselves.
@@ -113,8 +130,8 @@ router.get('/:id/events', (req, res) => {
     // Only process if this is still the active connection for this player.
     // (Not a stale handler from a replaced connection.)
     if (session.connections.get(playerId) === res) {
-      session.connections.delete(playerId);
       player.isConnected = false;
+      session.connections.delete(playerId);
 
       console.log(
         `[SSE] ${player.displayName} disconnected from ${session.roomCode} ` +
@@ -125,6 +142,12 @@ router.get('/:id/events', (req, res) => {
       broadcast(session, 'PLAYER_LEFT', {
         player_id: playerId,
       });
+      if (player.isHost && session.phase !== 'lobby' && session.phase !== 'ended') {
+        console.log(`[Events] Host disconnected mid-game in ${session.roomCode} — broadcasting SESSION_CANCELLED`);
+        broadcast(session, 'SESSION_CANCELLED', {
+          reason: 'The host left the game.',
+        });
+      }
     }
   });
 });

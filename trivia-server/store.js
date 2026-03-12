@@ -1,4 +1,4 @@
-// project_folder/trivia-server/store.dart
+// project_folder/trivia-server/store.js
 
 // In-memory session store.
 //
