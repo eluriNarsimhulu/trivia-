@@ -65,11 +65,7 @@ function startGame(sessionId) {
 
   // Broadcast GAME_START to all players simultaneously.
   // Flutter transitions: lobby → countdown on receiving this.
-  // broadcast(session, 'GAME_START', {
-  //   total_rounds:   session.questions.length,
-  //   question_count: session.questions.length,
-  //   scoring_rules:  SCORING_RULES,
-  // });
+  
   broadcast(session, 'GAME_START', {
     total_rounds:   session.totalRounds,
     question_count: session.questions.length,
@@ -606,9 +602,7 @@ function restartGame(sessionId) {
   });
 
   return { ok: true };
+
 }
 
-// Add _clearAllTimers as a standalone helper (used by restartGame above):
-
-// Update exports:
 module.exports = { startGame, submitAnswer, restartGame };

@@ -1,6 +1,5 @@
 // project_folder/lib/core/services/rest_service.dart
 
-
 /// RestService — concrete implementation of RestServiceInterface.
 ///
 /// Architecture note:
@@ -23,7 +22,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'rest_service_interface.dart';
-// import 'rest_service_interface.dart';
 
 class RestService implements RestServiceInterface {
   final String _baseUrl;
@@ -204,6 +202,8 @@ class RestService implements RestServiceInterface {
 }
 
 /// Typed exception for REST failures.
+///
+/// Single canonical definition — do NOT duplicate in rest_service_interface.dart.
 ///
 /// Using a typed exception rather than a raw Exception lets callers
 /// inspect the status code and decide whether to retry, show an error,

@@ -62,31 +62,8 @@ class SessionCancelledEvent extends GameEvent {
       reason: json['reason'] as String? ?? 'Session was cancelled.',
     );
   }
+  
 }
-// ---------------------------------------------------------------------------
-// GAME_RESTARTED
-// Broadcast by server when host restarts with same players.
-// All clients transition back to lobby — SSE stays connected.
-// ---------------------------------------------------------------------------
-// class GameRestartedEvent extends GameEvent {
-//   final String roomCode;
-//   final List<Player> players;
-
-//   const GameRestartedEvent({
-//     required this.roomCode,
-//     required this.players,
-//   });
-
-//   factory GameRestartedEvent.fromJson(Map<String, dynamic> json) {
-//     final playerList = json['players'] as List;
-//     return GameRestartedEvent(
-//       roomCode: json['room_code'] as String,
-//       players: List.unmodifiable(
-//         playerList.map((p) => Player.fromJson(p as Map<String, dynamic>)),
-//       ),
-//     );
-//   }
-// }
 
 // ---------------------------------------------------------------------------
 // PLAYER_JOINED

@@ -25,8 +25,18 @@ import 'player_list_widget.dart';
 import '../game/game_screen.dart';
 import '../lobby/lobby_entry_screen.dart';
 
-class LobbyScreen extends StatelessWidget {
+class LobbyScreen extends StatefulWidget {
   const LobbyScreen({super.key});
+
+  @override
+  State<LobbyScreen> createState() => _LobbyScreenState();
+}
+
+class _LobbyScreenState extends State<LobbyScreen> {
+  /// Guards against double-navigation when state rebuilds rapidly.
+  /// Set to true the moment a navigation is triggered — all subsequent
+  /// addPostFrameCallback firings for the same transition are no-ops.
+  bool _navigating = false;
 
   @override
   Widget build(BuildContext context) {
@@ -36,22 +46,33 @@ class LobbyScreen extends StatelessWidget {
     return ValueListenableBuilder<GameState>(
       valueListenable: controller.state,
       builder: (context, state, _) {
-        // React to phase changes — navigate away when game starts.
+        // React to phase changes — navigate away when game starts or session ends.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!context.mounted) return;
+          if (!context.mounted || _navigating) return;
 
-          // Navigate to GameScreen when game starts
-          if (state.phase == GamePhase.countdown) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const GameScreen()),
-            );
+          // Reset flag if state returns to lobby (e.g. after a restart cycle
+          // that briefly passed through initial before settling on lobby).
+          if (state.phase == GamePhase.lobby) {
+            _navigating = false;
+            return;
           }
 
-          // Navigate back to entry screen if session ended or left
+          // Navigate back to entry screen if session ended or was left.
+          // Checked first — initial takes priority over countdown.
           if (state.phase == GamePhase.initial) {
+            _navigating = true;
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const LobbyEntryScreen()),
               (route) => false,
+            );
+            return;
+          }
+
+          // Navigate to GameScreen when countdown starts.
+          if (state.phase == GamePhase.countdown) {
+            _navigating = true;
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const GameScreen()),
             );
           }
         });

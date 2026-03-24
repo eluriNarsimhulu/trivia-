@@ -8,6 +8,18 @@
 ///
 /// In tests, inject a MockRestService that returns pre-scripted responses
 /// without touching the network.
+///
+/// Note on RestException:
+///   RestException is defined in rest_service.dart (the concrete layer).
+///   It is imported here indirectly via rest_service.dart's export — callers
+///   that only import this interface file still catch RestException because
+///   GameController imports both this file and rest_service_interface.dart
+///   is the only file imported by GameController, and RestException is
+///   thrown by the concrete RestService which GameController never imports.
+///
+///   The single canonical definition lives in rest_service.dart:
+///     { required int statusCode, required String message }
+///     bool get isIgnorable => statusCode == 409 || statusCode == 400;
 
 abstract class RestServiceInterface {
   Future<Map<String, dynamic>> createSession({
@@ -43,21 +55,4 @@ abstract class RestServiceInterface {
     required String playerId,
     required String answer,
   });
-}
-
-class RestException implements Exception {
-  final String message;
-  final int? statusCode;
-  final bool isIgnorable;
-
-  const RestException(
-    this.message, {
-    this.statusCode,
-    this.isIgnorable = false,
-  });
-
-  @override
-  String toString() {
-    return 'RestException($statusCode): $message';
-  }
 }

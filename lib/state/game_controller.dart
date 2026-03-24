@@ -36,6 +36,7 @@ import '../core/utils/logger.dart';
 
 import '../core/services/sse_service_interface.dart';
 import '../core/services/rest_service_interface.dart';
+import '../core/services/rest_service.dart';
 
 /// How long the "get ready" countdown runs before we expect the QUESTION event.
 const _kCountdownDuration = Duration(seconds: 3);
@@ -53,11 +54,12 @@ class GameController {
       ValueNotifier(GameState.initial());
 
   // Active timers — tracked so we can cancel safely.
-  // Active timers — tracked so we can cancel safely.
   Timer? _countdownTimer;
   Timer? _resultDelayTimer;
   Timer? _sessionCancelledTimer;
-  StreamSubscription<GameEvent>? _eventSubscription;   // ← ADD THIS;
+
+  // SSE event subscription — stored so it can be cancelled on disconnect/dispose.
+  StreamSubscription<GameEvent>? _eventSubscription;
 
   // ---------------------------------------------------------------------------
   // Edge case tracking fields
@@ -87,12 +89,12 @@ class GameController {
   bool _canTransition(GamePhase from, GamePhase to) {
     const allowedTransitions = <GamePhase, Set<GamePhase>>{
       GamePhase.initial:        {GamePhase.lobby},
-      GamePhase.lobby:          {GamePhase.countdown},
-      GamePhase.countdown:      {GamePhase.questionActive},
-      GamePhase.questionActive: {GamePhase.questionClosed},
-      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard}, // ← add leaderboard
-      GamePhase.roundResult:    {GamePhase.leaderboard},
-      GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd},
+      GamePhase.lobby:          {GamePhase.countdown, GamePhase.error},
+      GamePhase.countdown:      {GamePhase.questionActive, GamePhase.error},
+      GamePhase.questionActive: {GamePhase.questionClosed, GamePhase.error},
+      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard, GamePhase.error},
+      GamePhase.roundResult:    {GamePhase.leaderboard, GamePhase.error},
+      GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd, GamePhase.error},
       GamePhase.gameEnd:        {GamePhase.lobby},
     };
     return allowedTransitions[from]?.contains(to) ?? false;
@@ -336,6 +338,8 @@ Future<void> restartGame() async {
     }
 
     // Server will broadcast SESSION_CANCELLED to others.
+    await _eventSubscription?.cancel();
+    _eventSubscription = null;
     await _sseService.disconnect();
 
     _emit(GameState.initial());
@@ -751,14 +755,6 @@ Future<void> restartGame() async {
   // ERROR HANDLING
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // void _onSseError(Object error) {
-  //   // Surface error for UI reconnection banner. Phase is preserved —
-  //   // game resumes naturally when SSE reconnects and replays missed events.
-  //   // The transition validator ensures replayed events cannot corrupt state.
-  //   debugPrint('[GameController] SSE error: $error');
-  //   _emit(state.value.copyWith(errorMessage: error.toString()));
-  // }
-
   void _onSseError(Object error) {
 
     gameError('GameController', 'SSE error: $error');
@@ -773,10 +769,12 @@ Future<void> restartGame() async {
       // stream emits several terminal errors before the UI reacts.
       _permanentErrorEmitted = true;
       _cancelAllTimers();
-      _emit(state.value.copyWith(
-        phase:        GamePhase.error,
-        errorMessage: 'Connection permanently lost. Please rejoin.',
-      ));
+      _transitionTo(
+        GamePhase.error,
+        updater: (s) => s.copyWith(
+          errorMessage: 'Connection permanently lost. Please rejoin.',
+        ),
+      );
       return;
     }
 
