@@ -15,20 +15,24 @@ import '../../core/models/scoring.dart';
 class LeaderboardWidget extends StatefulWidget {
   final List<PlayerScore> players;
   final int roundNumber;
+  final int totalRounds;
   final bool isFinal;
   final String? winnerPlayerId;
 
-  final bool isHost;              // ADD
-  final VoidCallback? onPlayAgain; // ADD
+  final bool isHost;
+  final VoidCallback? onPlayAgain;
+  final VoidCallback? onGoToLobby;
 
   const LeaderboardWidget({
     super.key,
     required this.players,
     required this.roundNumber,
+    required this.totalRounds,
     required this.isFinal,
     this.winnerPlayerId,
-    this.isHost = false,          // ADD
-    this.onPlayAgain,             // ADD
+    this.isHost = false,
+    this.onPlayAgain,
+    this.onGoToLobby,
   });
 
   @override
@@ -115,42 +119,73 @@ class _LeaderboardWidgetState extends State<LeaderboardWidget>
           if (widget.isFinal) ...[
             const SizedBox(height: 20),
 
-            if (widget.isHost)
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: widget.onPlayAgain,
-                  icon: const Icon(Icons.replay_rounded),
-                  label: const Text(
-                    'Play Again',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+            if (widget.isHost) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: OutlinedButton.icon(
+                        onPressed: widget.onGoToLobby,
+                        icon: const Icon(Icons.meeting_room_rounded),
+                        label: const Text(
+                          'Go to Lobby',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white30, width: 1.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE94560),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: widget.onPlayAgain,
+                        icon: const Icon(Icons.replay_rounded),
+                        label: const Text(
+                          'Play Again',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFE94560),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              )
-            else
+                ],
+              ),
+            ] else
               const Text(
-                'Waiting for host to restart…',
+                'Waiting for host…',
                 style: TextStyle(color: Colors.white38, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
 
           ] else ...[
             const SizedBox(height: 16),
-            const Center(
+            Center(
               child: Text(
-                'Next round starting soon…',
-                style: TextStyle(color: Colors.white38, fontSize: 13),
+                widget.roundNumber >= widget.totalRounds
+                    ? '🏁 Game completed! Final results coming…'
+                    : 'Next round starting soon…',
+                style: const TextStyle(color: Colors.white38, fontSize: 13),
               ),
             ),
           ],

@@ -23,9 +23,17 @@ import 'question_view.dart';
 import 'result_banner.dart';
 import 'leaderboard_widget.dart';
 import '../lobby/lobby_screen.dart';
+import '../lobby/lobby_entry_screen.dart';
 
-class GameScreen extends StatelessWidget {
+class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
+
+  @override
+  State<GameScreen> createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen> {
+  bool _navigating = false;
 
   @override
   Widget build(BuildContext context) {
@@ -36,11 +44,20 @@ class GameScreen extends StatelessWidget {
       builder: (context, state, _) {
         if (state.phase == GamePhase.lobby) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) {
-              Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => const LobbyScreen()),
-              );
-            }
+            if (!context.mounted || _navigating) return;
+            _navigating = true;
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const LobbyScreen()),
+            );
+          });
+        } else if (state.phase == GamePhase.initial) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted || _navigating) return;
+            _navigating = true;
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const LobbyEntryScreen()),
+              (route) => false,
+            );
           });
         }
         return PopScope(
@@ -107,6 +124,7 @@ class GameScreen extends StatelessWidget {
           key: const ValueKey('leaderboard'),
           players: state.topPlayers,
           roundNumber: state.session?.currentRound ?? 0,
+          totalRounds: state.session?.totalRounds ?? 0,
           isFinal: false,
           isHost: state.isHost,
         );
@@ -116,12 +134,12 @@ class GameScreen extends StatelessWidget {
           key: const ValueKey('game-end'),
           players:         state.topPlayers,
           roundNumber:     state.session?.totalRounds ?? 0,
+          totalRounds:     state.session?.totalRounds ?? 0,
           isFinal:         true,
           winnerPlayerId:  state.winnerPlayerId,
-          isHost:          state.isHost,           // ← already there
-          onPlayAgain:     state.isHost            // ← wire the callback
-              ? () => controller.restartGame()
-              : null,
+          isHost:          state.isHost,
+          onPlayAgain:     state.isHost ? () => controller.restartGame() : null,
+          onGoToLobby:     state.isHost ? () => controller.goToLobby() : null,
         );
 
       case GamePhase.error:
@@ -131,11 +149,12 @@ class GameScreen extends StatelessWidget {
           onRetry: () => controller.leaveSession(),
         );
 
-      // Lobby and initial phases should never reach GameScreen.
-      // If they do, show a safe fallback.
+      // initial and lobby phases navigate away via addPostFrameCallback.
+      // Show a blank scaffold — NOT a spinner — so there's no visual buffering
+      // between the "Leave Game" tap and the navigation completing.
       case GamePhase.initial:
       case GamePhase.lobby:
-        return _loadingView(key: const ValueKey('fallback'));
+        return const SizedBox.shrink();
     }
   }
 

@@ -54,12 +54,11 @@ class GameController {
       ValueNotifier(GameState.initial());
 
   // Active timers — tracked so we can cancel safely.
+  // Active timers — tracked so we can cancel safely.
   Timer? _countdownTimer;
   Timer? _resultDelayTimer;
   Timer? _sessionCancelledTimer;
-
-  // SSE event subscription — stored so it can be cancelled on disconnect/dispose.
-  StreamSubscription<GameEvent>? _eventSubscription;
+  StreamSubscription<GameEvent>? _eventSubscription;   // ← ADD THIS;
 
   // ---------------------------------------------------------------------------
   // Edge case tracking fields
@@ -89,12 +88,12 @@ class GameController {
   bool _canTransition(GamePhase from, GamePhase to) {
     const allowedTransitions = <GamePhase, Set<GamePhase>>{
       GamePhase.initial:        {GamePhase.lobby},
-      GamePhase.lobby:          {GamePhase.countdown, GamePhase.error},
-      GamePhase.countdown:      {GamePhase.questionActive, GamePhase.error},
-      GamePhase.questionActive: {GamePhase.questionClosed, GamePhase.error},
-      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard, GamePhase.error},
-      GamePhase.roundResult:    {GamePhase.leaderboard, GamePhase.error},
-      GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd, GamePhase.error},
+      GamePhase.lobby:          {GamePhase.countdown},
+      GamePhase.countdown:      {GamePhase.questionActive},
+      GamePhase.questionActive: {GamePhase.questionClosed},
+      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard}, // ← add leaderboard
+      GamePhase.roundResult:    {GamePhase.leaderboard},
+      GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd},
       GamePhase.gameEnd:        {GamePhase.lobby},
     };
     return allowedTransitions[from]?.contains(to) ?? false;
@@ -243,6 +242,14 @@ Future<void> restartGame() async {
     }
   }
 
+  /// HOST-ONLY: sends all players back to lobby without restarting scores.
+  /// Used by the "Go to Lobby" button on the final leaderboard.
+  /// Internally calls restartGame on the server — server broadcasts
+  /// GAME_RESTARTED which moves all clients to lobby phase.
+  Future<void> goToLobby() async {
+    await restartGame();
+  }
+
   Future<void> submitAnswer({
     required String questionId,
     required String answer,
@@ -305,12 +312,11 @@ Future<void> restartGame() async {
 
   /// Leaves the session, cancels all timers, tears down SSE.
   Future<void> leaveSession() async {
-
     _permanentErrorEmitted = false;
     _cancelAllTimers();
     _lastAnsweredQuestionId = null;
-    await _eventSubscription?.cancel();   // ← ADD THIS
-    _eventSubscription = null;             // ← ADD THIS
+    await _eventSubscription?.cancel();
+    _eventSubscription = null;
     await _sseService.disconnect();
     _emit(GameState.initial());
   }
@@ -338,8 +344,6 @@ Future<void> restartGame() async {
     }
 
     // Server will broadcast SESSION_CANCELLED to others.
-    await _eventSubscription?.cancel();
-    _eventSubscription = null;
     await _sseService.disconnect();
 
     _emit(GameState.initial());
@@ -390,8 +394,10 @@ Future<void> restartGame() async {
         _handleLeaderboard(event);
       case GameEndEvent():
         _handleGameEnd(event);
-      case GameRestartedEvent():          // ← ADD
+      case GameRestartedEvent():
         _handleGameRestarted(event);
+      case HostChangedEvent():
+        _handleHostChanged(event);
       case SessionCancelledEvent():
         _handleSessionCancelled(event);
     }
@@ -431,9 +437,12 @@ Future<void> restartGame() async {
     final session = state.value.session;
     if (session == null) return;
 
-    final updatedPlayers = session.players.map((p) {
-      return p.id == event.playerId ? p.copyWith(isConnected: false) : p;
-    }).toList();
+    // Remove the player from the list entirely.
+    // We do NOT keep them as "disconnected" — a leave is permanent.
+    // Reconnects (network drops) trigger PLAYER_JOINED, not PLAYER_LEFT.
+    final updatedPlayers = session.players
+        .where((p) => p.id != event.playerId)
+        .toList();
 
     _emit(state.value.copyWith(
       session: session.copyWith(players: List.unmodifiable(updatedPlayers)),
@@ -675,6 +684,29 @@ Future<void> restartGame() async {
     );
   }
 
+  void _handleHostChanged(HostChangedEvent event) {
+    final session = state.value.session;
+    if (session == null) return;
+
+    // Update the session's hostId so isHost computed getter reflects the change.
+    final updatedSession = session.copyWith(hostId: event.newHostId);
+
+    // Also update the player list — mark old host as non-host, new host as host.
+    final updatedPlayers = updatedSession.players.map((p) {
+      if (p.id == event.newHostId) return p.copyWith(isHost: true);
+      if (p.isHost) return p.copyWith(isHost: false);
+      return p;
+    }).toList();
+
+    _emit(state.value.copyWith(
+      session: updatedSession.copyWith(
+        players: List.unmodifiable(updatedPlayers),
+      ),
+    ));
+
+    gameLog('GameController', 'Host changed to ${event.newHostName}');
+  }
+
   void _handleSessionCancelled(SessionCancelledEvent event) {
 
     // Ignore if already in a terminal or disconnected state.
@@ -755,6 +787,14 @@ Future<void> restartGame() async {
   // ERROR HANDLING
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // void _onSseError(Object error) {
+  //   // Surface error for UI reconnection banner. Phase is preserved —
+  //   // game resumes naturally when SSE reconnects and replays missed events.
+  //   // The transition validator ensures replayed events cannot corrupt state.
+  //   debugPrint('[GameController] SSE error: $error');
+  //   _emit(state.value.copyWith(errorMessage: error.toString()));
+  // }
+
   void _onSseError(Object error) {
 
     gameError('GameController', 'SSE error: $error');
@@ -769,12 +809,10 @@ Future<void> restartGame() async {
       // stream emits several terminal errors before the UI reacts.
       _permanentErrorEmitted = true;
       _cancelAllTimers();
-      _transitionTo(
-        GamePhase.error,
-        updater: (s) => s.copyWith(
-          errorMessage: 'Connection permanently lost. Please rejoin.',
-        ),
-      );
+      _emit(state.value.copyWith(
+        phase:        GamePhase.error,
+        errorMessage: 'Connection permanently lost. Please rejoin.',
+      ));
       return;
     }
 

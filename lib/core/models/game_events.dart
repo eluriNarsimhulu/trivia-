@@ -1,4 +1,3 @@
-
 // project_folder/lib/core/models/game_events.dart
 /// Typed SSE event hierarchy.
 ///
@@ -62,8 +61,31 @@ class SessionCancelledEvent extends GameEvent {
       reason: json['reason'] as String? ?? 'Session was cancelled.',
     );
   }
-  
 }
+// ---------------------------------------------------------------------------
+// GAME_RESTARTED
+// Broadcast by server when host restarts with same players.
+// All clients transition back to lobby — SSE stays connected.
+// ---------------------------------------------------------------------------
+// class GameRestartedEvent extends GameEvent {
+//   final String roomCode;
+//   final List<Player> players;
+
+//   const GameRestartedEvent({
+//     required this.roomCode,
+//     required this.players,
+//   });
+
+//   factory GameRestartedEvent.fromJson(Map<String, dynamic> json) {
+//     final playerList = json['players'] as List;
+//     return GameRestartedEvent(
+//       roomCode: json['room_code'] as String,
+//       players: List.unmodifiable(
+//         playerList.map((p) => Player.fromJson(p as Map<String, dynamic>)),
+//       ),
+//     );
+//   }
+// }
 
 // ---------------------------------------------------------------------------
 // PLAYER_JOINED
@@ -253,6 +275,25 @@ class GameEndEvent extends GameEvent {
       ),
       winnerPlayerId:      json['winner_player_id'] as String,
       rewardPointsGranted: json['reward_points_granted'] as int,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HOST_CHANGED
+// Broadcast when the host disconnects mid-game and authority is transferred
+// to another connected player. All clients update hostId in their session.
+// ---------------------------------------------------------------------------
+class HostChangedEvent extends GameEvent {
+  final String newHostId;
+  final String newHostName;
+
+  const HostChangedEvent({required this.newHostId, required this.newHostName});
+
+  factory HostChangedEvent.fromJson(Map<String, dynamic> json) {
+    return HostChangedEvent(
+      newHostId:   json['new_host_id'] as String,
+      newHostName: json['new_host_name'] as String,
     );
   }
 }

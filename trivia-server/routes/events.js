@@ -19,8 +19,20 @@
 const express = require('express');
 const router  = express.Router();
 
-const { getSession, serializePlayer } = require('../store');
-const { broadcast, sendToPlayer }     = require('../broadcast');
+const { getSession, serializePlayer, deleteSession } = require('../store');
+const { broadcast, sendToPlayer }                    = require('../broadcast');
+
+// _clearAllTimers is imported from game.js to avoid duplicating logic.
+// We use a local inline version here to avoid circular require.
+function _clearAllTimers(session) {
+  const names = ['question', 'answerCount', 'result', 'leaderboard', 'cleanup'];
+  for (const name of names) {
+    if (session.timers[name]) {
+      clearTimeout(session.timers[name]);
+      session.timers[name] = null;
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // GET /sessions/:id/events?playerId=...
@@ -129,24 +141,64 @@ router.get('/:id/events', (req, res) => {
 
     // Only process if this is still the active connection for this player.
     // (Not a stale handler from a replaced connection.)
-    if (session.connections.get(playerId) === res) {
-      player.isConnected = false;
-      session.connections.delete(playerId);
+    if (session.connections.get(playerId) !== res) return;
 
-      console.log(
-        `[SSE] ${player.displayName} disconnected from ${session.roomCode} ` +
-        `(${session.connections.size} remaining)`
-      );
+    // Remove the player's connection and mark as disconnected.
+    session.connections.delete(playerId);
+    player.isConnected = false;
 
-      // Notify remaining players.
-      broadcast(session, 'PLAYER_LEFT', {
-        player_id: playerId,
-      });
-      if (player.isHost && session.phase !== 'lobby' && session.phase !== 'ended') {
-        console.log(`[Events] Host disconnected mid-game in ${session.roomCode} — broadcasting SESSION_CANCELLED`);
-        broadcast(session, 'SESSION_CANCELLED', {
-          reason: 'The host left the game.',
+    // Remove the player from the session player list entirely.
+    // Staying "disconnected" in the list is only useful for reconnect scenarios
+    // (network drop). A deliberate leave/close should remove them completely.
+    session.players.delete(playerId);
+    session.scores.delete(playerId);
+
+    console.log(
+      `[SSE] ${player.displayName} disconnected from ${session.roomCode} ` +
+      `(${session.connections.size} remaining)`
+    );
+
+    // --- Empty room: delete the session so the room code is freed ---
+    if (session.players.size === 0) {
+      console.log(`[SSE] All players left ${session.roomCode} — deleting session`);
+      _clearAllTimers(session);
+      deleteSession(session.sessionId);
+      return;
+    }
+
+    // Notify remaining players this person left.
+    broadcast(session, 'PLAYER_LEFT', {
+      player_id: playerId,
+    });
+
+    // --- Host left: transfer host to another connected player ---
+    if (player.isHost && session.phase !== 'ended') {
+      // Pick the first still-connected player as the new host.
+      let newHostId = null;
+      for (const [pid, p] of session.players) {
+        if (p.isConnected) {
+          newHostId = pid;
+          break;
+        }
+      }
+
+      if (newHostId) {
+        // Update session and player record.
+        session.hostId = newHostId;
+        session.players.get(newHostId).isHost = true;
+
+        console.log(`[SSE] Host left — transferring host to ${session.players.get(newHostId).displayName}`);
+
+        // Broadcast the new host to all remaining players.
+        broadcast(session, 'HOST_CHANGED', {
+          new_host_id: newHostId,
+          new_host_name: session.players.get(newHostId).displayName,
         });
+      } else {
+        // No connected players remain — close the session.
+        console.log(`[SSE] Host left and no connected players remain — deleting session`);
+        _clearAllTimers(session);
+        deleteSession(session.sessionId);
       }
     }
   });

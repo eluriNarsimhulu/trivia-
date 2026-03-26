@@ -322,6 +322,9 @@ class SseService implements SseServiceInterface {
       case 'SESSION_CANCELLED':
         return SessionCancelledEvent.fromJson(json);
 
+      case 'HOST_CHANGED':
+        return HostChangedEvent.fromJson(json);
+
       default:
         return null;
     }
