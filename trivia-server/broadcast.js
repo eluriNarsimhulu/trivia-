@@ -24,7 +24,7 @@
  * @param {object} payload   - JSON-serializable payload
  */
 function broadcast(session, eventName, payload) {
-  const id    = ++_eventIdCounter;
+  const id = ++_eventIdCounter;
   const frame = buildFrameWithId(id, eventName, payload);
   let sent = 0;
 
@@ -89,6 +89,10 @@ function sendToPlayer(session, playerId, eventName, payload) {
 
 let _eventIdCounter = 0;
 
+function getCurrentEventId() {
+  return _eventIdCounter;
+}
+
 function buildFrameWithId(id, eventName, payload) {
   return `id: ${id}\nevent: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
@@ -98,4 +102,4 @@ function buildFrame(eventName, payload) {
   return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
-module.exports = { broadcast, sendToPlayer, buildFrame };
+module.exports = { broadcast, sendToPlayer, buildFrame, getCurrentEventId };

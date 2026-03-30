@@ -12,6 +12,8 @@
 ///   list on every PLAYER_JOINED / PLAYER_LEFT event rather than mutating.
 
 import 'player.dart';
+import 'scoring.dart';
+import 'question.dart';
 
 class GameSession {
   final String sessionId;
@@ -20,6 +22,9 @@ class GameSession {
   final List<Player> players;
   final int totalRounds;
   final int currentRound;
+  final String phase;
+  final ScoringRules? scoringRules;
+  final Question? currentQuestion;
 
   const GameSession({
     required this.sessionId,
@@ -28,6 +33,9 @@ class GameSession {
     required this.players,
     required this.totalRounds,
     required this.currentRound,
+    required this.phase,
+    this.scoringRules,
+    this.currentQuestion,
   });
 
   factory GameSession.fromJson(Map<String, dynamic> json) {
@@ -41,6 +49,13 @@ class GameSession {
       ),
       totalRounds:  json['total_rounds'] as int,
       currentRound: json['current_round'] as int? ?? 0,
+      phase:        json['phase'] as String? ?? 'lobby',
+      scoringRules: json['scoring_rules'] != null
+          ? ScoringRules.fromJson(json['scoring_rules'] as Map<String, dynamic>)
+          : null,
+      currentQuestion: json['current_question'] != null
+          ? Question.fromJson(json['current_question'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -60,6 +75,9 @@ class GameSession {
     List<Player>? players,
     int? totalRounds,
     int? currentRound,
+    String? phase,
+    ScoringRules? scoringRules,
+    Question? currentQuestion,
   }) {
     return GameSession(
       sessionId:    sessionId ?? this.sessionId,
@@ -68,6 +86,9 @@ class GameSession {
       players:      players ?? this.players,
       totalRounds:  totalRounds ?? this.totalRounds,
       currentRound: currentRound ?? this.currentRound,
+      phase:        phase ?? this.phase,
+      scoringRules: scoringRules ?? this.scoringRules,
+      currentQuestion: currentQuestion ?? this.currentQuestion,
     );
   }
 }

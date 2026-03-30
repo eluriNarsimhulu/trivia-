@@ -22,8 +22,8 @@ Future<void> main() async {
     apiBaseUrl: const String.fromEnvironment(
       'API_BASE_URL',
       // defaultValue: 'http://192.168.29.220:3000',
-      // defaultValue: 'http://10.179.18.147:3000',
-      defaultValue: 'https://trivia-server-zbdl.onrender.com',
+      defaultValue: 'http://10.67.220.147:3000',
+      // defaultValue: 'https://trivia-server-zbdl.onrender.com',
     ),
   );
 

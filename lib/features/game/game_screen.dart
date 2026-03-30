@@ -63,6 +63,7 @@ class _GameScreenState extends State<GameScreen> {
         return PopScope(
           canPop: false, // back button disabled during active game
           child: Scaffold(
+            resizeToAvoidBottomInset: true,
             backgroundColor: const Color(0xFF1A1A2E),
             body: SafeArea(
               child: AnimatedSwitcher(
@@ -138,7 +139,6 @@ class _GameScreenState extends State<GameScreen> {
           isFinal:         true,
           winnerPlayerId:  state.winnerPlayerId,
           isHost:          state.isHost,
-          onPlayAgain:     state.isHost ? () => controller.restartGame() : null,
           onGoToLobby:     state.isHost ? () => controller.goToLobby() : null,
         );
 

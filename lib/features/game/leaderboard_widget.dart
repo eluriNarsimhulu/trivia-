@@ -20,7 +20,6 @@ class LeaderboardWidget extends StatefulWidget {
   final String? winnerPlayerId;
 
   final bool isHost;
-  final VoidCallback? onPlayAgain;
   final VoidCallback? onGoToLobby;
 
   const LeaderboardWidget({
@@ -31,7 +30,6 @@ class LeaderboardWidget extends StatefulWidget {
     required this.isFinal,
     this.winnerPlayerId,
     this.isHost = false,
-    this.onPlayAgain,
     this.onGoToLobby,
   });
 
@@ -120,56 +118,28 @@ class _LeaderboardWidgetState extends State<LeaderboardWidget>
             const SizedBox(height: 20),
 
             if (widget.isHost) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: OutlinedButton.icon(
-                        onPressed: widget.onGoToLobby,
-                        icon: const Icon(Icons.meeting_room_rounded),
-                        label: const Text(
-                          'Go to Lobby',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: const BorderSide(color: Colors.white30, width: 1.5),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
+              SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton.icon(
+                  onPressed: widget.onGoToLobby,
+                  icon: const Icon(Icons.meeting_room_rounded),
+                  label: const Text(
+                    'Finish & Return to Lobby',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: ElevatedButton.icon(
-                        onPressed: widget.onPlayAgain,
-                        icon: const Icon(Icons.replay_rounded),
-                        label: const Text(
-                          'Play Again',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFE94560),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFE94560),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                ],
+                ),
               ),
             ] else
               const Text(
@@ -183,7 +153,7 @@ class _LeaderboardWidgetState extends State<LeaderboardWidget>
             Center(
               child: Text(
                 widget.roundNumber >= widget.totalRounds
-                    ? '🏁 Game completed! Final results coming…'
+                    ? 'Game Completed'
                     : 'Next round starting soon…',
                 style: const TextStyle(color: Colors.white38, fontSize: 13),
               ),

@@ -10,6 +10,7 @@ abstract class SseServiceInterface {
   Future<void> connect({
     required String sessionId,
     required String playerId,
+    String? lastEventId,
   });
 
   /// Closes the SSE connection

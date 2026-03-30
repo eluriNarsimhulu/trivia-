@@ -21,9 +21,11 @@
 //     scores:               Map<playerId, { total, streak, rankDelta }>
 //     answers:              Map<playerId, string>  (for current question)
 //     phase:                string
-//     timers:               { question: Timeout|null, answerCount: Timeout|null }
+//     timers:               { startup: Timeout|null, question: Timeout|null, ... }
 //     totalRounds:          number
 //   }
+
+const SESSION_STARTUP_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 const sessions = new Map();
 
@@ -57,23 +59,32 @@ function createSession(sessionId, hostId, totalRounds) {
     sessionId,
     roomCode,
     hostId,
-    players:              new Map(),
-    connections:          new Map(),
-    questions:            [],
+    players: new Map(),
+    connections: new Map(),
+    questions: [],
     currentQuestionIndex: -1,
-    questionStartTime:    null,
-    scores:               new Map(),
-    answers:              new Map(),
-    phase:                'lobby',
+    questionStartTime: null,
+    scores: new Map(),
+    answers: new Map(),
+    phase: 'lobby',
     timers: {
-      question:    null,
+      startup: null,
+      question: null,
       answerCount: null,
-      result:      null,
+      result: null,
       leaderboard: null,
-      cleanup:     null,
+      cleanup: null,
     },
     totalRounds,
   };
+
+  // -- Bug #2 Fix: Ghost Session Timeout --
+  // If the game doesn't start (startGame in game.js) within 10 minutes,
+  // delete the session to free memory and room code.
+  session.timers.startup = setTimeout(() => {
+    console.log(`[Store] Startup timeout for ${session.roomCode} — deleting session.`);
+    deleteSession(session.sessionId);
+  }, SESSION_STARTUP_TIMEOUT_MS);
 
   sessions.set(sessionId, session);
   roomCodeIndex.set(roomCode, sessionId);
@@ -104,6 +115,11 @@ function getSessionByRoomCode(roomCode) {
 function deleteSession(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
+    // Clear the startup timer if it's still pending.
+    if (session.timers.startup) {
+      clearTimeout(session.timers.startup);
+      session.timers.startup = null;
+    }
     roomCodeIndex.delete(session.roomCode);
     sessions.delete(sessionId);
   }
@@ -116,14 +132,40 @@ function deleteSession(sessionId) {
  *   session_id, room_code, host_id, players (array), total_rounds, current_round
  */
 function serializeSession(session) {
-  return {
-    session_id:    session.sessionId,
-    room_code:     session.roomCode,
-    host_id:       session.hostId,
-    players:       Array.from(session.players.values()).map(serializePlayer),
-    total_rounds:  session.totalRounds,
+  const snapshot = {
+    session_id: session.sessionId,
+    room_code: session.roomCode,
+    host_id: session.hostId,
+    players: Array.from(session.players.values()).map(serializePlayer),
+    total_rounds: session.totalRounds,
     current_round: session.currentQuestionIndex + 1,
+    phase: session.phase,
   };
+
+  // If the game has started, include scoring rules.
+  if (session.phase !== 'lobby' && session.questions && session.questions.length > 0) {
+    // Scoring rules are typically constant or set at game start.
+    // We assume they are available if the game is active.
+    const { SCORING_RULES } = require('./scoring');
+    snapshot.scoring_rules = SCORING_RULES;
+  }
+
+  // If a question is currently active or recently closed, include it.
+  if (['questionActive', 'questionClosed'].includes(session.phase)) {
+    const question = session.questions[session.currentQuestionIndex];
+    if (question) {
+      snapshot.current_question = {
+        id: question.id,
+        type: question.type,
+        text: question.text,
+        options: question.options,
+        timer_seconds: question.timer_seconds,
+        image_url: question.image_url ?? null,
+      };
+    }
+  }
+
+  return snapshot;
 }
 
 /**
@@ -134,9 +176,9 @@ function serializeSession(session) {
  */
 function serializePlayer(player) {
   return {
-    id:           player.id,
+    id: player.id,
     display_name: player.displayName,
-    is_host:      player.isHost,
+    is_host: player.isHost,
     is_connected: player.isConnected,
   };
 }
@@ -150,4 +192,3 @@ module.exports = {
   serializeSession,
   serializePlayer,
 };
-

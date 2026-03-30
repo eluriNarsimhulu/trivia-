@@ -24,17 +24,17 @@
 'use strict';
 
 const { getSession, serializePlayer, deleteSession } = require('./store');
-const { broadcast, sendToPlayer }                    = require('./broadcast');
-const { QUESTIONS }                                  = require('./questions');
-const { SCORING_RULES, calculateScore }              = require('./scoring');
+const { broadcast, sendToPlayer } = require('./broadcast');
+const { QUESTIONS } = require('./questions');
+const { SCORING_RULES, calculateScore } = require('./scoring');
 
 // ---------------------------------------------------------------------------
 // Timing constants (milliseconds)
 // All durations are server-controlled — clients just react to events.
 // ---------------------------------------------------------------------------
-const COUNTDOWN_MS       = 3_000;   // "Get Ready" before each question
-const RESULT_REVEAL_MS   = 2_000;   // show correct answer before leaderboard
-const LEADERBOARD_MS     = 5_000;   // leaderboard display between rounds
+const COUNTDOWN_MS = 3_000;   // "Get Ready" before each question
+const RESULT_REVEAL_MS = 2_000;   // show correct answer before leaderboard
+const LEADERBOARD_MS = 5_000;   // leaderboard display between rounds
 const QUESTIONS_PER_GAME = 5;       // how many questions per session
 
 // ---------------------------------------------------------------------------
@@ -56,7 +56,14 @@ function startGame(sessionId) {
 
   // Select a random subset of questions for this session.
   session.questions = _selectQuestions(Math.min(session.totalRounds, QUESTIONS.length));
-  session.phase     = 'countdown';
+  session.phase = 'countdown';
+
+  // -- Bug #2 Fix: Ghost Session Cancellation --
+  // Game has started—the session is no longer a "ghost."
+  if (session.timers.startup) {
+    clearTimeout(session.timers.startup);
+    session.timers.startup = null;
+  }
 
   console.log(
     `[Game] Starting ${session.roomCode} with ` +
@@ -65,11 +72,11 @@ function startGame(sessionId) {
 
   // Broadcast GAME_START to all players simultaneously.
   // Flutter transitions: lobby → countdown on receiving this.
-  
+
   broadcast(session, 'GAME_START', {
-    total_rounds:   session.totalRounds,
+    total_rounds: session.totalRounds,
     question_count: session.questions.length,
-    scoring_rules:  SCORING_RULES,
+    scoring_rules: SCORING_RULES,
   });
 
   // Begin the first question after the countdown delay.
@@ -115,7 +122,7 @@ function submitAnswer(sessionId, questionId, playerId, answer) {
 
   // Record answer with timestamp for speed bonus calculation.
   session.answers.set(playerId, {
-    answer:      answer.trim(),
+    answer: answer.trim(),
     submittedAt: Date.now(),
   });
 
@@ -129,7 +136,7 @@ function submitAnswer(sessionId, questionId, playerId, answer) {
 
   // If all connected players have answered, close the question early.
   const connectedCount = _connectedPlayerCount(session);
-  const answeredCount  = session.answers.size;
+  const answeredCount = session.answers.size;
 
   if (answeredCount >= connectedCount) {
     console.log(`[Game] All ${connectedCount} players answered — closing early`);
@@ -187,9 +194,9 @@ function _openQuestion(session, questionIndex) {
   }
 
   session.currentQuestionIndex = questionIndex;
-  session.questionStartTime    = Date.now();
-  session.answers              = new Map(); // clear previous answers
-  session.phase                = 'questionActive';
+  session.questionStartTime = Date.now();
+  session.answers = new Map(); // clear previous answers
+  session.phase = 'questionActive';
 
   console.log(
     `[Game] Q${questionIndex + 1}/${session.questions.length}: ` +
@@ -199,15 +206,15 @@ function _openQuestion(session, questionIndex) {
   // Broadcast QUESTION to all players.
   // Flutter transitions: countdown → questionActive on receiving this.
   broadcast(session, 'QUESTION', {
-    round_number:   questionIndex + 1,
+    round_number: questionIndex + 1,
     question_index: questionIndex,
     question: {
-      id:            question.id,
-      type:          question.type,
-      text:          question.text,
-      options:       question.options,
+      id: question.id,
+      type: question.type,
+      text: question.text,
+      options: question.options,
       timer_seconds: question.timer_seconds,
-      image_url:     question.image_url ?? null,
+      image_url: question.image_url ?? null,
     },
   });
 
@@ -250,8 +257,8 @@ function _closeQuestionEarly(session) {
 function _processQuestionEnd(session) {
   session.phase = 'questionClosed';
 
-  const currentQ    = session.questions[session.currentQuestionIndex];
-  const correctAns  = currentQ.correct;
+  const currentQ = session.questions[session.currentQuestionIndex];
+  const correctAns = currentQ.correct;
   const leaderboard = _calculateAndApplyScores(session, currentQ);
 
   // Diagnostic — confirms question count is correct.
@@ -265,9 +272,9 @@ function _processQuestionEnd(session) {
     const submission = session.answers.get(playerId);
     sendToPlayer(session, playerId, 'Q_RESULT', {
       correct_answer: correctAns,
-      score_delta:    submission?._scoreDelta  ?? 0,
-      speed_bonus:    submission?._speedBonus  ?? 0,
-      streak_bonus:   submission?._streakBonus ?? 0,
+      score_delta: submission?._scoreDelta ?? 0,
+      speed_bonus: submission?._speedBonus ?? 0,
+      streak_bonus: submission?._streakBonus ?? 0,
     });
   }
 
@@ -314,18 +321,18 @@ function _calculateAndApplyScores(session, question) {
       );
 
       // Apply score.
-      playerScore.total  += scoreDelta;
+      playerScore.total += scoreDelta;
       playerScore.streak += 1;
 
       // Stamp breakdown onto the answer record for Q_RESULT lookup above.
-      submission._scoreDelta  = scoreDelta;
-      submission._speedBonus  = speedBonus;
+      submission._scoreDelta = scoreDelta;
+      submission._speedBonus = speedBonus;
       submission._streakBonus = streakBonus;
     } else {
       // Wrong answer resets streak.
-      playerScore.streak     = 0;
-      submission._scoreDelta  = 0;
-      submission._speedBonus  = 0;
+      playerScore.streak = 0;
+      submission._scoreDelta = 0;
+      submission._speedBonus = 0;
       submission._streakBonus = 0;
     }
   }
@@ -348,7 +355,7 @@ function _calculateAndApplyScores(session, question) {
  */
 function _isCorrectAnswer(playerAnswer, correctAnswer) {
   return playerAnswer.toLowerCase().trim() ===
-         correctAnswer.toLowerCase().trim();
+    correctAnswer.toLowerCase().trim();
 }
 
 /**
@@ -367,10 +374,10 @@ function _buildLeaderboard(session) {
     entries.push({
       playerId,
       displayName: player.displayName,
-      totalScore:  score.total,
-      streak:      score.streak,
+      totalScore: score.total,
+      streak: score.streak,
       // Use null to signal "no previous rank" for first round.
-      lastRank:    score.lastRank ?? null,
+      lastRank: score.lastRank ?? null,
     });
   }
 
@@ -389,12 +396,12 @@ function _buildLeaderboard(session) {
     if (score) score.lastRank = newRank;
 
     return {
-      player_id:    entry.playerId,
+      player_id: entry.playerId,
       display_name: entry.displayName,
-      total_score:  entry.totalScore,
-      rank:         newRank,
-      rank_delta:   rankDelta,
-      streak:       entry.streak,
+      total_score: entry.totalScore,
+      rank: newRank,
+      rank_delta: rankDelta,
+      streak: entry.streak,
     };
   });
 
@@ -409,7 +416,7 @@ function _broadcastLeaderboard(session, leaderboard) {
 
   broadcast(session, 'LEADERBOARD', {
     round_number: session.currentQuestionIndex + 1,
-    top_players:  leaderboard,
+    top_players: leaderboard,
   });
 
   console.log(`[Game] Leaderboard sent for round ${session.currentQuestionIndex + 1}`);
@@ -430,8 +437,8 @@ function _endGame(session, finalLeaderboard) {
   );
 
   broadcast(session, 'GAME_END', {
-    final_leaderboard:     finalLeaderboard,
-    winner_player_id:      winner?.player_id ?? '',
+    final_leaderboard: finalLeaderboard,
+    winner_player_id: winner?.player_id ?? '',
     reward_points_granted: winner ? 500 : 0,
   });
 
@@ -445,7 +452,7 @@ function _endGame(session, finalLeaderboard) {
     _clearAllTimers(session);
 
     for (const res of session.connections.values()) {
-      try { res.end(); } catch (_) {}
+      try { res.end(); } catch (_) { }
     }
 
     deleteSession(session.sessionId);
@@ -477,12 +484,12 @@ function _scheduleAnswerCountBroadcast(session) {
     // Only broadcast if question is still active.
     if (session.phase !== 'questionActive') return;
 
-    const total    = session.players.size;
+    const total = session.players.size;
     const answered = session.answers.size;
 
     broadcast(session, 'ANSWER_COUNT', {
       answered_count: answered,
-      total_players:  total,
+      total_players: total,
     });
   }, 500);
 }
@@ -499,12 +506,12 @@ function _scheduleAnswerCountBroadcast(session) {
  * @returns {Question[]}
  */
 function _selectQuestions(count) {
-  const pool    = [...QUESTIONS]; // shallow copy — do not mutate the original
-  const capped  = Math.min(count, pool.length);
+  const pool = [...QUESTIONS]; // shallow copy — do not mutate the original
+  const capped = Math.min(count, pool.length);
 
   // Fisher-Yates shuffle.
   for (let i = pool.length - 1; i > 0; i--) {
-    const j      = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
 
@@ -527,11 +534,20 @@ function _clearTimer(session, name) {
 
 
 function _clearAllTimers(session) {
+  // Clear standard game loop timers.
+  _clearTimer(session, 'startup');
   _clearTimer(session, 'question');
   _clearTimer(session, 'answerCount');
   _clearTimer(session, 'result');
   _clearTimer(session, 'leaderboard');
   _clearTimer(session, 'cleanup');
+
+  // Clear any dynamic player disconnect timers (Bug #1).
+  for (const name in session.timers) {
+    if (name.startsWith('disconnect_')) {
+      _clearTimer(session, name);
+    }
+  }
 }
 
 /**
@@ -562,11 +578,11 @@ function _connectedPlayerCount(session) {
  * Broadcasts GAME_RESTARTED so all Flutter clients return to lobby.
  * SSE connections are kept alive — no reconnect needed.
  */
-function restartGame(sessionId) {
+function goToLobby(sessionId) {
   const session = getSession(sessionId);
   if (!session) return { ok: false, error: 'Session not found.' };
 
-  // Allow restart only from ended state.
+  // Allow only from ended state.
   if (session.phase !== 'ended') {
     return { ok: false, error: 'Game has not ended yet.' };
   }
@@ -575,24 +591,24 @@ function restartGame(sessionId) {
   _clearAllTimers(session);
 
   // Reset session state back to lobby.
-  session.phase                = 'lobby';
-  session.questions            = [];
+  session.phase = 'lobby';
+  session.questions = [];
   session.currentQuestionIndex = -1;
-  session.questionStartTime    = null;
-  session.answers              = new Map();
+  session.questionStartTime = null;
+  session.answers = new Map();
 
   // Reset all player scores but keep the players in the session.
   for (const [playerId] of session.scores) {
     session.scores.set(playerId, { total: 0, streak: 0, lastRank: null });
   }
 
-  console.log(`[Game] Restarting ${session.roomCode} back to lobby`);
+  console.log(`[Game] Sending session ${session.roomCode} back to lobby`);
 
   // Serialize current player list for the event payload.
   const players = Array.from(session.players.values()).map(p => ({
-    id:           p.id,
+    id: p.id,
     display_name: p.displayName,
-    is_host:      p.isHost,
+    is_host: p.isHost,
     is_connected: p.isConnected,
   }));
 
@@ -605,4 +621,43 @@ function restartGame(sessionId) {
 
 }
 
-module.exports = { startGame, submitAnswer, restartGame };
+/**
+ * RESTARTS the game immediately, skipping the lobby.
+ * Resets scores, selects NEW questions, and broadcasts GAME_START.
+ */
+function restartGameDirect(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return { ok: false, error: 'Session not found.' };
+
+  if (session.phase !== 'ended') {
+    return { ok: false, error: 'Game has not ended yet.' };
+  }
+
+  _clearAllTimers(session);
+
+  // Select NEW set of questions for the restart.
+  session.questions = _selectQuestions(Math.min(session.totalRounds, QUESTIONS.length));
+  session.currentQuestionIndex = -1;
+  session.questionStartTime = null;
+  session.answers = new Map();
+
+  // Reset scores.
+  for (const [playerId] of session.scores) {
+    session.scores.set(playerId, { total: 0, streak: 0, lastRank: null });
+  }
+
+  session.phase = 'countdown';
+
+  // Synchronous restart for all clients.
+  broadcast(session, 'GAME_START', {
+    total_rounds: session.totalRounds,
+    question_count: session.questions.length,
+    scoring_rules: SCORING_RULES,
+  });
+
+  _scheduleQuestion(session, 0);
+
+  return { ok: true };
+}
+
+module.exports = { startGame, submitAnswer, goToLobby, restartGameDirect };

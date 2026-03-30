@@ -13,10 +13,10 @@ const {
   deleteSession,
 } = require('../store');
 
-const { broadcast } = require('../broadcast');
-const express       = require('express');
+const { broadcast, getCurrentEventId } = require('../broadcast');
+const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const router        = express.Router();
+const router = express.Router();
 
 
 
@@ -24,7 +24,7 @@ const router        = express.Router();
 // Host cancels the session from lobby. Notifies all players then cleans up.
 router.delete('/:id', (req, res) => {
   const { id: sessionId } = req.params;
-  const { host_id }       = req.query;  // sent as query param: ?host_id=...
+  const { host_id } = req.query;  // sent as query param: ?host_id=...
 
   if (!host_id) {
     return res.status(400).json({ error: 'host_id is required.' });
@@ -51,7 +51,7 @@ router.delete('/:id', (req, res) => {
   // Give clients ~500ms to receive the event before closing connections.
   setTimeout(() => {
     for (const res of session.connections.values()) {
-      try { res.end(); } catch (_) {}
+      try { res.end(); } catch (_) { }
     }
     deleteSession(sessionId);
     console.log(`[Sessions] Session ${session.roomCode} cancelled by host.`);
@@ -76,14 +76,14 @@ router.post('/', (req, res) => {
   }
 
   const sessionId = uuidv4();
-  const session   = createSession(sessionId, host_id, total_rounds);
+  const session = createSession(sessionId, host_id, total_rounds);
 
   // Add the host as the first player.
   session.players.set(host_id, {
-    id:           host_id,
-    displayName:  display_name,
-    isHost:       true,
-    isConnected:  true,
+    id: host_id,
+    displayName: display_name,
+    isHost: true,
+    isConnected: true,
   });
 
   // Initialise host score record.
@@ -93,7 +93,9 @@ router.post('/', (req, res) => {
 
   return res.status(201).json({
     session_id: sessionId,
-    room_code:  session.roomCode,
+    room_code: session.roomCode,
+    current_event_id: getCurrentEventId(),
+    phase: 'lobby',
   });
 });
 
@@ -126,9 +128,9 @@ router.post('/join', (req, res) => {
   const isRejoining = session.players.has(player_id);
 
   session.players.set(player_id, {
-    id:          player_id,
+    id: player_id,
     displayName: display_name,
-    isHost:      false,
+    isHost: false,
     isConnected: true,
   });
 
@@ -138,9 +140,31 @@ router.post('/join', (req, res) => {
 
   console.log(`[Sessions] ${display_name} joined ${session.roomCode}${isRejoining ? ' (rejoin)' : ''}`);
 
+  // Create the snapshot AFTER all state changes (including player list update).
+  const sessionSnapshot = serializeSession(session);
+
   return res.status(200).json({
     session_id: session.sessionId,
-    session:    serializeSession(session),
+    session: sessionSnapshot,
+    current_event_id: getCurrentEventId(),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /sessions/:id/sync
+// Returns a full session snapshot for state-based synchronization.
+// ---------------------------------------------------------------------------
+router.get('/:id/sync', (req, res) => {
+  const { id: sessionId } = req.params;
+  const session = getSession(sessionId);
+
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found.' });
+  }
+
+  return res.status(200).json({
+    session: serializeSession(session),
+    current_event_id: getCurrentEventId(),
   });
 });
 

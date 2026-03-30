@@ -17,10 +17,10 @@
 'use strict';
 
 const express = require('express');
-const router  = express.Router();
+const router = express.Router();
 
 const { getSession, serializePlayer, deleteSession } = require('../store');
-const { broadcast, sendToPlayer }                    = require('../broadcast');
+const { broadcast, sendToPlayer } = require('../broadcast');
 
 // _clearAllTimers is imported from game.js to avoid duplicating logic.
 // We use a local inline version here to avoid circular require.
@@ -63,9 +63,9 @@ router.get('/:id/events', (req, res) => {
   // These three headers are mandatory for a valid SSE stream.
   // no-cache prevents proxies from buffering events.
   // keep-alive tells the TCP layer to hold the connection open.
-  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('Connection', 'keep-alive');
 
   // Flush headers immediately so the client knows the stream is open.
   // Without this, some HTTP clients buffer until the first write.
@@ -81,7 +81,7 @@ router.get('/:id/events', (req, res) => {
       // Flush a comment before ending so the client's onDone fires cleanly.
       existingConnection.write(': replaced\n\n');
       existingConnection.end();
-    } catch (_) {}
+    } catch (_) { }
     // Small synchronous pause is not possible in Node, but end() is immediate.
     // The new registration below is safe because end() marks writableEnded=true
     // synchronously, so the old close handler's identity check will fail.
@@ -95,6 +95,16 @@ router.get('/:id/events', (req, res) => {
     `[SSE] ${player.displayName} connected to ${session.roomCode} ` +
     `(${session.connections.size} total)`
   );
+
+  // -- Bug #1 Fix: Cancel Grace Period on Reconnect --
+  // If this player was in the middle of a 10s disconnect countdown,
+  // stop the countdown now. They are back!
+  const disconnectTimerName = `disconnect_${playerId}`;
+  if (session.timers[disconnectTimerName]) {
+    console.log(`[SSE] ${player.displayName} reconnected — cancelling disconnect timer.`);
+    clearTimeout(session.timers[disconnectTimerName]);
+    session.timers[disconnectTimerName] = null;
+  }
 
   // -- Send initial heartbeat --
   // Confirms to the client that the stream is alive immediately.
@@ -131,7 +141,7 @@ router.get('/:id/events', (req, res) => {
     } else {
       clearInterval(heartbeatInterval);
     }
-  }, 25_000);
+  }, 12_000);
 
   // -- Disconnect handler --
   // Fires when the client closes the connection (app backgrounded,
@@ -140,67 +150,67 @@ router.get('/:id/events', (req, res) => {
     clearInterval(heartbeatInterval);
 
     // Only process if this is still the active connection for this player.
-    // (Not a stale handler from a replaced connection.)
     if (session.connections.get(playerId) !== res) return;
 
     // Remove the player's connection and mark as disconnected.
     session.connections.delete(playerId);
     player.isConnected = false;
 
-    // Remove the player from the session player list entirely.
-    // Staying "disconnected" in the list is only useful for reconnect scenarios
-    // (network drop). A deliberate leave/close should remove them completely.
-    session.players.delete(playerId);
-    session.scores.delete(playerId);
+    console.log(`[SSE] ${player.displayName} signal lost. Starting 10s grace period.`);
 
-    console.log(
-      `[SSE] ${player.displayName} disconnected from ${session.roomCode} ` +
-      `(${session.connections.size} remaining)`
-    );
+    // -- Bug #1 Fix: 10-second Grace Period --
+    // Instead of deleting the player immediately, we wait 10 seconds.
+    // If they reconnect before then, this timer is cleared above.
+    const disconnectTimerName = `disconnect_${playerId}`;
+    session.timers[disconnectTimerName] = setTimeout(() => {
 
-    // --- Empty room: delete the session so the room code is freed ---
-    if (session.players.size === 0) {
-      console.log(`[SSE] All players left ${session.roomCode} — deleting session`);
-      _clearAllTimers(session);
-      deleteSession(session.sessionId);
-      return;
-    }
+      session.timers[disconnectTimerName] = null;
 
-    // Notify remaining players this person left.
-    broadcast(session, 'PLAYER_LEFT', {
-      player_id: playerId,
-    });
+      // Grace period expired — now we remove them for real.
+      console.log(`[SSE] Grace period expired for ${player.displayName} — removing from session.`);
 
-    // --- Host left: transfer host to another connected player ---
-    if (player.isHost && session.phase !== 'ended') {
-      // Pick the first still-connected player as the new host.
-      let newHostId = null;
-      for (const [pid, p] of session.players) {
-        if (p.isConnected) {
-          newHostId = pid;
-          break;
+      session.players.delete(playerId);
+      session.scores.delete(playerId);
+
+      // --- Empty room: delete the session so the room code is freed ---
+      if (session.players.size === 0) {
+        console.log(`[SSE] All players left ${session.roomCode} — deleting session`);
+        _clearAllTimers(session);
+        deleteSession(session.sessionId);
+        return;
+      }
+
+      // Notify remaining players this person left.
+      broadcast(session, 'PLAYER_LEFT', {
+        player_id: playerId,
+      });
+
+      // --- Host left: transfer host to another connected player ---
+      if (player.isHost && session.phase !== 'ended') {
+        let newHostId = null;
+        for (const [pid, p] of session.players) {
+          if (p.isConnected) {
+            newHostId = pid;
+            break;
+          }
+        }
+
+        if (newHostId) {
+          session.hostId = newHostId;
+          session.players.get(newHostId).isHost = true;
+          console.log(`[SSE] Host left for good — transferring to ${session.players.get(newHostId).displayName}`);
+          broadcast(session, 'HOST_CHANGED', {
+            new_host_id: newHostId,
+            new_host_name: session.players.get(newHostId).displayName,
+          });
+        } else {
+          console.log(`[SSE] Host left and no players remain — deleting session`);
+          _clearAllTimers(session);
+          deleteSession(session.sessionId);
         }
       }
 
-      if (newHostId) {
-        // Update session and player record.
-        session.hostId = newHostId;
-        session.players.get(newHostId).isHost = true;
-
-        console.log(`[SSE] Host left — transferring host to ${session.players.get(newHostId).displayName}`);
-
-        // Broadcast the new host to all remaining players.
-        broadcast(session, 'HOST_CHANGED', {
-          new_host_id: newHostId,
-          new_host_name: session.players.get(newHostId).displayName,
-        });
-      } else {
-        // No connected players remain — close the session.
-        console.log(`[SSE] Host left and no connected players remain — deleting session`);
-        _clearAllTimers(session);
-        deleteSession(session.sessionId);
-      }
-    }
+    }, 10_000); // 10 second grace period
   });
 });
 

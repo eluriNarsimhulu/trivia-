@@ -6,10 +6,10 @@
 
 'use strict';
 
-const express              = require('express');
-const router               = express.Router();
-const { getSession }       = require('../store');
-const { startGame, submitAnswer, restartGame } = require('../game');
+const express = require('express');
+const router = express.Router();
+const { getSession } = require('../store');
+const { startGame, submitAnswer, goToLobby, restartGameDirect } = require('../game');
 
 // ---------------------------------------------------------------------------
 // POST /sessions/:id/restart
@@ -20,7 +20,7 @@ const { startGame, submitAnswer, restartGame } = require('../game');
 // ---------------------------------------------------------------------------
 router.post('/:id/restart', (req, res) => {
   const { id: sessionId } = req.params;
-  const { host_id }       = req.body;
+  const { host_id } = req.body;
 
   if (!host_id) {
     return res.status(400).json({ error: 'host_id is required.' });
@@ -35,12 +35,41 @@ router.post('/:id/restart', (req, res) => {
     return res.status(403).json({ error: 'Only the host can restart the game.' });
   }
 
-  const result = restartGame(sessionId);
+  const result = restartGameDirect(sessionId);
   if (!result.ok) {
     return res.status(409).json({ error: result.error });
   }
 
   return res.status(200).json({ status: 'restarted' });
+});
+
+// ---------------------------------------------------------------------------
+// POST /sessions/:id/lobby
+// Host sends everyone back to the lobby.
+// ---------------------------------------------------------------------------
+router.post('/:id/lobby', (req, res) => {
+  const { id: sessionId } = req.params;
+  const { host_id } = req.body;
+
+  if (!host_id) {
+    return res.status(400).json({ error: 'host_id is required.' });
+  }
+
+  const session = getSession(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found.' });
+  }
+
+  if (session.hostId !== host_id) {
+    return res.status(403).json({ error: 'Only the host can perform this action.' });
+  }
+
+  const result = goToLobby(sessionId);
+  if (!result.ok) {
+    return res.status(409).json({ error: result.error });
+  }
+
+  return res.status(200).json({ status: 'returned_to_lobby' });
 });
 // ---------------------------------------------------------------------------
 // POST /sessions/:id/start
@@ -51,7 +80,7 @@ router.post('/:id/restart', (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/:id/start', (req, res) => {
   const { id: sessionId } = req.params;
-  const { host_id }       = req.body;
+  const { host_id } = req.body;
 
   if (!host_id) {
     return res.status(400).json({ error: 'host_id is required.' });
@@ -89,7 +118,7 @@ router.post('/:id/start', (req, res) => {
 // The server adds a second layer of both checks.
 // ---------------------------------------------------------------------------
 router.post('/:id/answers', (req, res) => {
-  const { id: sessionId }               = req.params;
+  const { id: sessionId } = req.params;
   const { question_id, player_id, answer } = req.body;
 
   if (!question_id || !player_id || !answer) {

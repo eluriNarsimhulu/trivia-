@@ -36,7 +36,6 @@ import '../core/utils/logger.dart';
 
 import '../core/services/sse_service_interface.dart';
 import '../core/services/rest_service_interface.dart';
-import '../core/services/rest_service.dart';
 
 /// How long the "get ready" countdown runs before we expect the QUESTION event.
 const _kCountdownDuration = Duration(seconds: 3);
@@ -54,11 +53,11 @@ class GameController {
       ValueNotifier(GameState.initial());
 
   // Active timers — tracked so we can cancel safely.
-  // Active timers — tracked so we can cancel safely.
   Timer? _countdownTimer;
   Timer? _resultDelayTimer;
   Timer? _sessionCancelledTimer;
-  StreamSubscription<GameEvent>? _eventSubscription;   // ← ADD THIS;
+  Timer? _syncTimer;
+  StreamSubscription<GameEvent>? _eventSubscription;
 
   // ---------------------------------------------------------------------------
   // Edge case tracking fields
@@ -71,6 +70,9 @@ class GameController {
   /// Tracks if a permanent SSE error was already emitted.
   bool _permanentErrorEmitted = false;
 
+  /// Tracks if the controller has been disposed or left the session intentionally.
+  bool _disconnected = false;
+
   GameController({
     required SseServiceInterface sseService,
     required RestServiceInterface restService,
@@ -82,28 +84,31 @@ class GameController {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /// Defines every legal phase transition as a whitelist.
-  ///
-  /// Any transition not listed here is illegal and will be rejected.
-  /// This is the single place to update when the game flow changes.
   bool _canTransition(GamePhase from, GamePhase to) {
-    const allowedTransitions = <GamePhase, Set<GamePhase>>{
-      GamePhase.initial:        {GamePhase.lobby},
-      GamePhase.lobby:          {GamePhase.countdown},
-      GamePhase.countdown:      {GamePhase.questionActive},
-      GamePhase.questionActive: {GamePhase.questionClosed},
-      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard}, // ← add leaderboard
-      GamePhase.roundResult:    {GamePhase.leaderboard},
-      GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd},
-      GamePhase.gameEnd:        {GamePhase.lobby},
+    const allPhases = {
+      GamePhase.lobby,
+      GamePhase.countdown,
+      GamePhase.questionActive,
+      GamePhase.questionClosed,
+      GamePhase.roundResult,
+      GamePhase.leaderboard,
+      GamePhase.gameEnd,
+      GamePhase.error,
     };
-    return allowedTransitions[from]?.contains(to) ?? false;
+
+    const allowedTransitions = <GamePhase, Set<GamePhase>>{
+      GamePhase.initial:        allPhases, // Allow hydration jump from initial to any phase
+      GamePhase.lobby:          allPhases, // Allow jump from lobby (late-join race)
+      GamePhase.countdown:      {GamePhase.questionActive, GamePhase.error},
+      GamePhase.questionActive: {GamePhase.questionClosed, GamePhase.error},
+      GamePhase.questionClosed: {GamePhase.roundResult, GamePhase.leaderboard, GamePhase.error},
+      GamePhase.roundResult:    {GamePhase.leaderboard, GamePhase.error},
+      GamePhase.leaderboard:    {GamePhase.countdown, GamePhase.gameEnd, GamePhase.error},
+      GamePhase.gameEnd:        {GamePhase.lobby, GamePhase.countdown, GamePhase.error},
+    };
+    return allowedTransitions[from]?.contains(to) ?? (to == GamePhase.error);
   }
 
-  /// The ONLY method allowed to change game phase.
-  ///
-  /// Validates the transition, rejects illegal ones with a log,
-  /// and emits the new state. All handlers call this instead of
-  /// calling _emit() with a phase change directly.
   void _transitionTo(GamePhase newPhase, {GameState Function(GameState)? updater}) {
     final currentPhase = state.value.phase;
 
@@ -115,7 +120,6 @@ class GameController {
       return;
     }
 
-    // Apply optional extra state fields alongside the phase change.
     final baseState = state.value.copyWith(phase: newPhase);
     _emit(updater != null ? updater(baseState) : baseState);
   }
@@ -124,8 +128,6 @@ class GameController {
   // PUBLIC API
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// HOST flow: creates session via REST, builds GameSession from response,
-  /// then opens the SSE connection.
   Future<void> createAndJoinSession({
     required String hostId,
     required String displayName,
@@ -151,18 +153,35 @@ class GameController {
       players:      List.unmodifiable([host]),
       totalRounds:  totalRounds,
       currentRound: 0,
+      phase:        'lobby',
     );
 
-    // initial → lobby
+    final initialPhase = _mapServerPhase(session.phase);
+
     _transitionTo(
-      GamePhase.lobby,
-      updater: (s) => s.copyWith(currentPlayer: host, session: session),
+      initialPhase,
+      updater: (s) => s.copyWith(
+        currentPlayer: host,
+        session: session,
+        scoringRules: session.scoringRules,
+        currentQuestion: session.currentQuestion,
+        questionIndex: session.currentRound > 0 ? session.currentRound - 1 : 0,
+        totalPlayers: session.players.length,
+      ),
     );
 
-    await _connectSse(sessionId: session.sessionId, playerId: hostId);
+    if (initialPhase == GamePhase.countdown) {
+      _startCountdownTimer();
+    }
+
+    final initialEventId = response['current_event_id']?.toString();
+    await _connectSse(
+      sessionId: session.sessionId,
+      playerId: hostId,
+      lastEventId: initialEventId,
+    );
   }
 
-  /// PLAYER flow: joins via REST (receives full session snapshot), opens SSE.
   Future<void> joinSession({
     required String roomCode,
     required String playerId,
@@ -181,22 +200,36 @@ class GameController {
       isConnected: true,
     );
 
-    // REST join response includes current full session — handles late-join.
     final session = GameSession.fromJson(
       response['session'] as Map<String, dynamic>,
     );
 
-    // initial → lobby
+    final initialPhase = _mapServerPhase(session.phase);
+
     _transitionTo(
-      GamePhase.lobby,
-      updater: (s) => s.copyWith(currentPlayer: self, session: session),
+      initialPhase,
+      updater: (s) => s.copyWith(
+        currentPlayer: self,
+        session: session,
+        scoringRules: session.scoringRules,
+        currentQuestion: session.currentQuestion,
+        questionIndex: session.currentRound > 0 ? session.currentRound - 1 : 0,
+        totalPlayers: session.players.length,
+      ),
     );
 
-    await _connectSse(sessionId: session.sessionId, playerId: playerId);
+    if (initialPhase == GamePhase.countdown) {
+      _startCountdownTimer();
+    }
+
+    final initialEventId = response['current_event_id']?.toString();
+    await _connectSse(
+      sessionId: session.sessionId,
+      playerId: playerId,
+      lastEventId: initialEventId,
+    );
   }
 
-  /// HOST-ONLY: fires POST /sessions/{id}/start.
-  /// Server broadcasts GAME_START over SSE to all clients (host included).
   Future<void> startGame() async {
     if (!state.value.isHost) {
       gameWarn('GameController', 'startGame() called by non-host — ignored.');
@@ -210,21 +243,15 @@ class GameController {
       sessionId: session.sessionId,
       hostId: state.value.currentPlayer!.id,
     );
-    // No local phase change here. We wait for GAME_START over SSE
-    // so all clients transition lobby → countdown simultaneously.
   }
 
-  /// HOST-ONLY: restarts the game with the same players.
-/// Server broadcasts GAME_RESTARTED to all clients over SSE.
-/// SSE connection is kept alive — no reconnect needed.
-Future<void> restartGame() async {
+  Future<void> restartGame() async {
     if (!state.value.isHost) {
       gameWarn('GameController', 'restartGame() called by non-host — ignored.');
       return;
     }
 
     if (!_guardSession()) return;
-
     final session = state.value.session!;
 
     try {
@@ -232,8 +259,6 @@ Future<void> restartGame() async {
         sessionId: session.sessionId,
         hostId: state.value.currentPlayer!.id,
       );
-      // No local phase change.
-      // GAME_RESTARTED event from server drives the transition.
     } catch (e) {
       gameError('GameController', 'restartGame() failed: $e');
       _emit(state.value.copyWith(
@@ -242,33 +267,34 @@ Future<void> restartGame() async {
     }
   }
 
-  /// HOST-ONLY: sends all players back to lobby without restarting scores.
-  /// Used by the "Go to Lobby" button on the final leaderboard.
-  /// Internally calls restartGame on the server — server broadcasts
-  /// GAME_RESTARTED which moves all clients to lobby phase.
   Future<void> goToLobby() async {
-    await restartGame();
+    if (!state.value.isHost) {
+      gameWarn('GameController', 'goToLobby() called by non-host — ignored.');
+      return;
+    }
+
+    if (!_guardSession()) return;
+    final session = state.value.session!;
+
+    try {
+      await _restService.goToLobby(
+        sessionId: session.sessionId,
+        hostId: state.value.currentPlayer!.id,
+      );
+    } catch (e) {
+      gameError('GameController', 'goToLobby() failed: $e');
+    }
   }
 
   Future<void> submitAnswer({
     required String questionId,
     required String answer,
   }) async {
-    // Guard 1 — late submission.
-    // Phase may have moved to questionClosed between the user tapping
-    // and this method executing (especially on slow devices).
-    // The controller is authoritative; the UI phase-check is a UX hint only.
     if (state.value.phase != GamePhase.questionActive) {
       gameWarn('GameController', 'submitAnswer() ignored — phase is not questionActive');
       return;
     }
 
-    // Guard 2 — duplicate submission.
-    // In real-time games the user may tap an answer button twice quickly
-    // before the state update from the first submission re-renders the UI
-    // with locked buttons. We track the last answered question ID here
-    // so the second call is dropped at the controller layer regardless
-    // of UI state.
     if (_lastAnsweredQuestionId == questionId) {
       gameWarn('GameController', 'submitAnswer() duplicate ignored for question $questionId');
       return;
@@ -279,9 +305,6 @@ Future<void> restartGame() async {
     final session = state.value.session!;
     final player  = state.value.currentPlayer!;
 
-    // Mark as answered immediately — before the async REST call.
-    // This ensures a second tap that arrives before the HTTP round-trip
-    // completes is still caught by Guard 2 above.
     _lastAnsweredQuestionId = questionId;
 
     try {
@@ -293,32 +316,27 @@ Future<void> restartGame() async {
       );
     } on RestException catch (e) {
       if (e.isIgnorable) {
-        // 409 Conflict = server already has our answer (duplicate at HTTP level).
-        // 400 Bad Request = question already closed server-side.
-        // Both are safe to swallow — state is already correct.
         gameLog('GameController', 'submitAnswer() ignorable REST error: $e');
       } else {
-        // Unexpected server error (5xx, auth failure, etc.).
-        // Surface it non-destructively — phase stays intact, user sees a banner.
         gameError('GameController', 'submitAnswer() REST error: $e');
         _emit(state.value.copyWith(errorMessage: e.message));
       }
     } catch (e) {
-      // Network-level failure (socket timeout, no connectivity).
       gameError('GameController', 'submitAnswer() network error: $e');
       _emit(state.value.copyWith(errorMessage: 'Answer submission failed. Check your connection.'));
     }
   }
 
-  /// Leaves the session, cancels all timers, tears down SSE.
   Future<void> leaveSession() async {
     _permanentErrorEmitted = false;
     _cancelAllTimers();
+    _stopSyncTimer();
     _lastAnsweredQuestionId = null;
-    await _eventSubscription?.cancel();
-    _eventSubscription = null;
-    await _sseService.disconnect();
+
     _emit(GameState.initial());
+
+    _eventSubscription?.cancel().then((_) => _eventSubscription = null);
+    _sseService.disconnect();
   }
 
   Future<void> cancelSession() async {
@@ -333,6 +351,7 @@ Future<void> restartGame() async {
     final hostId  = state.value.currentPlayer!.id;
 
     _cancelAllTimers();
+    _stopSyncTimer();
 
     try {
       await _restService.cancelSession(
@@ -343,9 +362,7 @@ Future<void> restartGame() async {
       gameError('GameController', 'cancelSession() REST error: $e');
     }
 
-    // Server will broadcast SESSION_CANCELLED to others.
     await _sseService.disconnect();
-
     _emit(GameState.initial());
   }
 
@@ -356,23 +373,24 @@ Future<void> restartGame() async {
   Future<void> _connectSse({
     required String sessionId,
     required String playerId,
+    String? lastEventId,
   }) async {
-    // Cancel any existing subscription before opening a new one.
-    // Prevents double-firing if called twice (e.g. rejoin).
     await _eventSubscription?.cancel();
     _eventSubscription = null;
 
-    await _sseService.connect(sessionId: sessionId, playerId: playerId);
+    await _sseService.connect(
+      sessionId: sessionId,
+      playerId: playerId,
+      lastEventId: lastEventId,
+    );
     _eventSubscription = _sseService.events.listen(
       _onEvent,
       onError: _onSseError,
       cancelOnError: false,
     );
-  }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // EVENT DISPATCH — sealed switch is exhaustive at compile time
-  // ═══════════════════════════════════════════════════════════════════════════
+    _startSyncTimer();
+  }
 
   void _onEvent(GameEvent event) {
     switch (event) {
@@ -406,24 +424,20 @@ Future<void> restartGame() async {
   // ═══════════════════════════════════════════════════════════════════════════
   // HANDLERS
   // ═══════════════════════════════════════════════════════════════════════════
+
   void _handlePlayerJoined(PlayerJoinedEvent event) {
-    // No phase restriction — players can reconnect at any point.
     final session = state.value.session;
     if (session == null) return;
 
-    // If the player already exists in the list (reconnect scenario),
-    // update only their connection flag rather than appending a duplicate.
-    // If they are genuinely new (fresh join), they are appended.
-    // Either way, question/score state is completely untouched.
     final alreadyExists = session.players.any((p) => p.id == event.player.id);
 
     final updatedPlayers = alreadyExists
         ? session.players.map((p) {
             return p.id == event.player.id
-                ? p.copyWith(isConnected: true)   // restore connection flag
+                ? p.copyWith(isConnected: true)
                 : p;
           }).toList()
-        : [...session.players, event.player];     // genuine new join
+        : [...session.players, event.player];
 
     _emit(state.value.copyWith(
       session: session.copyWith(
@@ -433,13 +447,9 @@ Future<void> restartGame() async {
   }
 
   void _handlePlayerLeft(PlayerLeftEvent event) {
-    // No phase restriction — disconnects can happen at any time.
     final session = state.value.session;
     if (session == null) return;
 
-    // Remove the player from the list entirely.
-    // We do NOT keep them as "disconnected" — a leave is permanent.
-    // Reconnects (network drops) trigger PLAYER_JOINED, not PLAYER_LEFT.
     final updatedPlayers = session.players
         .where((p) => p.id != event.playerId)
         .toList();
@@ -449,21 +459,17 @@ Future<void> restartGame() async {
     ));
   }
 
-  /// Guard: only valid from lobby.
-  /// On reconnect, a replayed GAME_START must not reset an active game.
   void _handleGameStart(GameStartEvent event) {
     final currentPhase = state.value.phase;
-    if (currentPhase != GamePhase.lobby) {
-      gameWarn(
-        'GameController',
-        'GAME_START ignored — phase is $currentPhase, expected lobby',
-      );
+    final validPriorPhases = {GamePhase.initial, GamePhase.lobby};
+
+    if (!validPriorPhases.contains(currentPhase)) {
+      gameWarn('GameController', 'GAME_START ignored — phase is $currentPhase');
       return;
     }
 
     final session = state.value.session;
 
-    // lobby → countdown
     _transitionTo(
       GamePhase.countdown,
       updater: (s) => s.copyWith(
@@ -475,14 +481,9 @@ Future<void> restartGame() async {
       ),
     );
 
-    // Start the client-side countdown UX timer.
-    // This does NOT gate the QUESTION event — it is purely cosmetic.
-    // The real questionActive transition happens when QUESTION arrives from server.
     _startCountdownTimer();
   }
 
-  /// Guard: only valid from countdown or leaderboard (between rounds).
-  /// A replayed QUESTION during roundResult must be ignored.
   void _handleQuestion(QuestionEvent event) {
     final currentPhase = state.value.phase;
     final validPriorPhases = {GamePhase.countdown, GamePhase.leaderboard};
@@ -492,21 +493,11 @@ Future<void> restartGame() async {
       return;
     }
 
-    // Reset the duplicate-answer guard for the incoming question.
-    // Each new question gets a clean slate — the previous question's ID
-    // must not block submission for the next one.
     _lastAnsweredQuestionId = null;
-
-    // Cancel the countdown timer — the server has taken over.
     _cancelCountdownTimer();
 
     final session = state.value.session;
 
-    // Valid phases: countdown (normal flow) or leaderboard (between rounds).
-    // The server always broadcasts ROUND_COUNTDOWN before each QUESTION,
-    // so the client should normally already be in GamePhase.countdown when
-    // this event arrives. Accepting leaderboard as well makes the handler
-    // resilient to minor event ordering differences during reconnects.
     _transitionTo(
       GamePhase.questionActive,
       updater: (s) => s.copyWith(
@@ -522,46 +513,28 @@ Future<void> restartGame() async {
     );
   }
 
-  /// Guard: only meaningful during questionActive.
-  /// Debounced server push — stale counts after close must be dropped.
   void _handleAnswerCount(AnswerCountEvent event) {
     if (state.value.phase != GamePhase.questionActive) {
       gameWarn('GameController', 'ANSWER_COUNT ignored — phase is ${state.value.phase}');
       return;
     }
-    // No phase change — purely informational update.
     _emit(state.value.copyWith(
       answeredCount: event.answeredCount,
       totalPlayers:  event.totalPlayers,
     ));
   }
 
-  /// Two-step timed transition on Q_RESULT:
-  ///
-  ///   Step 1 (immediate): questionActive → questionClosed
-  ///     Locks the question. UI animates correct answer reveal.
-  ///
-  ///   Step 2 (after 1200ms): questionClosed → roundResult
-  ///     Score delta appears. UI animates points gained.
-  ///
-  /// The delay is intentional UX — it lets players register whether
-  /// they were right before the score hits them.
   void _handleQuestionResult(QuestionResultEvent event) {
-    // Step 1 — lock the question immediately.
     _transitionTo(
       GamePhase.questionClosed,
       updater: (s) => s.copyWith(correctAnswer: event.correctAnswer),
     );
 
-    // Guard: if transition was rejected (wrong prior phase), do not start timer.
     if (state.value.phase != GamePhase.questionClosed) return;
 
-    // Cancel any stale result timer before starting a new one.
     _cancelResultDelayTimer();
 
-    // Step 2 — delayed score reveal.
     _resultDelayTimer = Timer(_kResultRevealDelay, () {
-      // Re-check phase: a leaveSession() during the delay must abort this.
       if (state.value.phase != GamePhase.questionClosed) {
         gameWarn('GameController', 'Result delay fired but phase changed — aborted');
         return;
@@ -580,16 +553,11 @@ Future<void> restartGame() async {
   void _handleRoundCountdown(RoundCountdownEvent event) {
     final phase = state.value.phase;
 
-    // Accept from leaderboard (normal rounds)
-    // OR countdown (first round after GAME_START)
     if (phase != GamePhase.leaderboard && phase != GamePhase.countdown) {
-      gameWarn('GameController',
-        'ROUND_COUNTDOWN ignored — phase is $phase');
+      gameWarn('GameController', 'ROUND_COUNTDOWN ignored — phase is $phase');
       return;
     }
 
-    // Only transition if we came from leaderboard.
-    // First round is already in countdown due to GAME_START.
     if (phase == GamePhase.leaderboard) {
       _transitionTo(GamePhase.countdown);
     }
@@ -599,25 +567,15 @@ Future<void> restartGame() async {
 
   void _handleLeaderboard(LeaderboardEvent event) {
     final session = state.value.session;
-
-    // Cancel any pending result-reveal delay.
-    // LEADERBOARD may arrive before the 1200ms client timer fires.
     _cancelResultDelayTimer();
 
     final currentPhase = state.value.phase;
 
-    // If LEADERBOARD arrives while still in questionClosed, we need to step
-    // through roundResult first to satisfy the whitelist.
-    // Use _transitionTo so both steps are validated and logged.
     if (currentPhase == GamePhase.questionClosed) {
-      _transitionTo(GamePhase.roundResult);   // validated: questionClosed → roundResult ✓
-      // If the transition was rejected for any reason, bail out.
+      _transitionTo(GamePhase.roundResult);
       if (state.value.phase != GamePhase.roundResult) return;
     }
 
-    // Now transition to leaderboard (from roundResult OR leaderboard is unreachable
-    // — the only valid paths are roundResult → leaderboard and questionClosed → leaderboard,
-    // both of which are in the whitelist).
     _transitionTo(
       GamePhase.leaderboard,
       updater: (s) => s.copyWith(
@@ -629,7 +587,6 @@ Future<void> restartGame() async {
 
   void _handleGameEnd(GameEndEvent event) {
     _cancelAllTimers();
-    // leaderboard → gameEnd
     _transitionTo(
       GamePhase.gameEnd,
       updater: (s) => s.copyWith(
@@ -642,8 +599,7 @@ Future<void> restartGame() async {
 
   void _handleGameRestarted(GameRestartedEvent event) {
     if (state.value.phase != GamePhase.gameEnd) {
-      gameWarn('GameController',
-          'GAME_RESTARTED ignored — phase is ${state.value.phase}');
+      gameWarn('GameController', 'GAME_RESTARTED ignored — phase is ${state.value.phase}');
       return;
     }
 
@@ -659,15 +615,13 @@ Future<void> restartGame() async {
       currentRound: 0,
     );
 
-    // Force transition: gameEnd → lobby (whitelisted in _canTransition).
     _transitionTo(
       GamePhase.lobby,
       updater: (s) => GameState(
-        // Keep identity and session — reset everything else.
         currentPlayer:       s.currentPlayer,
         session:             updatedSession,
         phase:               GamePhase.lobby,
-        errorMessage:        null,   // explicitly cleared
+        errorMessage:        null,
         scoringRules:        null,
         currentQuestion:     null,
         questionIndex:       0,
@@ -688,10 +642,8 @@ Future<void> restartGame() async {
     final session = state.value.session;
     if (session == null) return;
 
-    // Update the session's hostId so isHost computed getter reflects the change.
     final updatedSession = session.copyWith(hostId: event.newHostId);
 
-    // Also update the player list — mark old host as non-host, new host as host.
     final updatedPlayers = updatedSession.players.map((p) {
       if (p.id == event.newHostId) return p.copyWith(isHost: true);
       if (p.isHost) return p.copyWith(isHost: false);
@@ -708,9 +660,6 @@ Future<void> restartGame() async {
   }
 
   void _handleSessionCancelled(SessionCancelledEvent event) {
-
-    // Ignore if already in a terminal or disconnected state.
-    // Accept from any active phase — host may quit mid-game.
     final phase = state.value.phase;
     if (phase == GamePhase.initial ||
         phase == GamePhase.error   ||
@@ -720,16 +669,11 @@ Future<void> restartGame() async {
     _permanentErrorEmitted = false;
     _lastAnsweredQuestionId = null;
 
-    // Show banner message briefly
-    _emit(state.value.copyWith(
-      errorMessage: event.reason,
-    ));
+    _emit(state.value.copyWith(errorMessage: event.reason));
 
-    // After short delay reset state
     _sessionCancelledTimer?.cancel();
-
     _sessionCancelledTimer = Timer(const Duration(seconds: 2), () async {
-      await _eventSubscription?.cancel();   // add this if you've applied BUG-03 fix
+      await _eventSubscription?.cancel();
       _eventSubscription = null;
       await _sseService.disconnect();
       _emit(GameState.initial());
@@ -737,28 +681,12 @@ Future<void> restartGame() async {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // COUNTDOWN TIMER
+  // TIMER HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// Starts the 3-second client-side "get ready" countdown.
-  ///
-  /// This timer is purely cosmetic UX. The actual questionActive transition
-  /// is driven by the server's QUESTION event arriving over SSE.
-  /// The timer fires only to advance the UI countdown display — it does NOT
-  /// self-transition to questionActive. That transition requires a QUESTION event.
-  ///
-  /// Why? Because in a multiplayer game, the server is the clock.
-  /// If we self-transitioned on timer fire, clock drift across clients
-  /// would cause them to show "active" at slightly different times,
-  /// creating unfair speed-bonus windows.
   void _startCountdownTimer() {
-    // Prevent duplicate timers (e.g. reconnect replaying GAME_START).
     _cancelCountdownTimer();
-
     _countdownTimer = Timer(_kCountdownDuration, () {
-      // Timer fires only as a UX signal. The QUESTION event from server
-      // will trigger the real questionActive transition.
-      // If QUESTION has already arrived and phase moved on, this is a no-op.
       if (state.value.phase == GamePhase.countdown) {
         gameLog('GameController', 'Countdown complete — awaiting QUESTION from server');
       }
@@ -778,35 +706,78 @@ Future<void> restartGame() async {
   void _cancelAllTimers() {
     _cancelCountdownTimer();
     _cancelResultDelayTimer();
-
+    _stopSyncTimer();
     _sessionCancelledTimer?.cancel();
     _sessionCancelledTimer = null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SYNC WATCHDOG (POLLING FALLBACK)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  void _startSyncTimer() {
+    _stopSyncTimer();
+    _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) => _performSync());
+  }
+
+  void _stopSyncTimer() {
+    _syncTimer?.cancel();
+    _syncTimer = null;
+  }
+
+  Future<void> _performSync() async {
+    final session = state.value.session;
+    if (session == null || _disconnected) return;
+
+    try {
+      final response = await _restService.syncSession(sessionId: session.sessionId);
+      final serverSession = GameSession.fromJson(response['session'] as Map<String, dynamic>);
+      final serverPhase = _mapServerPhase(serverSession.phase);
+
+      _handleSyncState(serverSession, serverPhase);
+    } catch (e) {
+      debugPrint('[GameController] Sync watchdog failed: $e');
+    }
+  }
+
+  void _handleSyncState(GameSession serverSession, GamePhase serverPhase) {
+    if (state.value.phase == serverPhase) {
+      _emit(state.value.copyWith(
+        session: serverSession,
+        totalPlayers: serverSession.players.length,
+      ));
+      return;
+    }
+
+    gameWarn('GameController', 'SYNC: Phase mismatch! Local=${state.value.phase}, Server=$serverPhase. Forcing hydration jump.');
+
+    _transitionTo(
+      serverPhase,
+      updater: (s) => s.copyWith(
+        session: serverSession,
+        scoringRules: serverSession.scoringRules,
+        currentQuestion: serverSession.currentQuestion,
+        questionIndex: serverSession.currentRound > 0 ? serverSession.currentRound - 1 : 0,
+        totalPlayers: serverSession.players.length,
+      ),
+    );
+
+    if (serverPhase == GamePhase.countdown) {
+      _startCountdownTimer();
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ERROR HANDLING
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // void _onSseError(Object error) {
-  //   // Surface error for UI reconnection banner. Phase is preserved —
-  //   // game resumes naturally when SSE reconnects and replays missed events.
-  //   // The transition validator ensures replayed events cannot corrupt state.
-  //   debugPrint('[GameController] SSE error: $error');
-  //   _emit(state.value.copyWith(errorMessage: error.toString()));
-  // }
-
   void _onSseError(Object error) {
-
     gameError('GameController', 'SSE error: $error');
 
     final isTerminal = error is SocketException &&
         error.message.contains('permanently disconnected');
 
     if (isTerminal && !_permanentErrorEmitted) {
-      // SseService has exhausted all reconnect attempts.
-      // Transition to error phase so GameScreen shows the error UI.
-      // The flag prevents this block from firing multiple times if the
-      // stream emits several terminal errors before the UI reacts.
       _permanentErrorEmitted = true;
       _cancelAllTimers();
       _emit(state.value.copyWith(
@@ -816,13 +787,8 @@ Future<void> restartGame() async {
       return;
     }
 
-    // Non-terminal error (transient drop — SseService is reconnecting).
-    // Preserve the current phase so the game can resume seamlessly.
-    // The UI shows a non-blocking reconnecting banner via errorMessage.
     if (!_permanentErrorEmitted) {
-      _emit(state.value.copyWith(
-        errorMessage: 'Reconnecting…',
-      ));
+      _emit(state.value.copyWith(errorMessage: 'Reconnecting…'));
     }
   }
 
@@ -831,65 +797,41 @@ Future<void> restartGame() async {
   // ═══════════════════════════════════════════════════════════════════════════
 
   bool _guardSession() {
-    assert(
-      state.value.session != null,
-      '[GameController] Expected an active session but session is null.',
-    );
+    assert(state.value.session != null, 'Expected an active session');
     return state.value.session != null;
   }
 
   bool _guardPlayer() {
-    assert(
-      state.value.currentPlayer != null,
-      '[GameController] Expected currentPlayer but it is null.',
-    );
+    assert(state.value.currentPlayer != null, 'Expected currentPlayer');
     return state.value.currentPlayer != null;
   }
-  /// Raw state emission — only called for non-phase-changing updates
-  /// (player list, answer count). All phase changes go through _transitionTo().
+
   void _emit(GameState newState) {
     state.value = newState;
   }
 
   Future<void> dispose() async {
+    _disconnected = true;
     _permanentErrorEmitted = false;
     _cancelAllTimers();
+    _stopSyncTimer();
     
-    await _eventSubscription?.cancel();   // ← ADD THIS
-    _eventSubscription = null;             // ← ADD THIS
+    await _eventSubscription?.cancel();
+    _eventSubscription = null;
     await _sseService.disconnect();
 
     state.dispose();
   }
-  
+
+  GamePhase _mapServerPhase(String serverPhase) {
+    switch (serverPhase) {
+      case 'lobby':           return GamePhase.lobby;
+      case 'countdown':       return GamePhase.countdown;
+      case 'questionActive':  return GamePhase.questionActive;
+      case 'questionClosed':  return GamePhase.questionClosed;
+      case 'leaderboard':     return GamePhase.leaderboard;
+      case 'gameEnd':         return GamePhase.gameEnd;
+      default:                return GamePhase.lobby;
+    }
+  }
 }
-
-
-// ```
-
-// ---
-
-// ## How The State Machine Now Works
-// ```
-// SSE Event arrives
-//        │
-//        ▼
-//   _onEvent() dispatch
-//        │
-//        ▼
-//   Handler runs
-//        │
-//        ├─ Non-phase updates (player list, answer count)
-//        │    └─ _emit() directly — no validator needed
-//        │
-//        └─ Phase-changing updates
-//             └─ _transitionTo(newPhase)
-//                      │
-//                      ├─ _canTransition(current, new)?
-//                      │        │
-//                      │      false ──► debugPrint + return  (state unchanged)
-//                      │        │
-//                      │       true
-//                      │        │
-//                      │        ▼
-//                      └─ _emit(updater(state.copyWith(phase: newPhase)))

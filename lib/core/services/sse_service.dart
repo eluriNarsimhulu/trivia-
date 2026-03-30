@@ -103,11 +103,12 @@ class SseService implements SseServiceInterface {
   Future<void> connect({
     required String sessionId,
     required String playerId,
-
+    String? lastEventId,
   }) async {
     // Store params for reconnect cycles.
     _sessionId = sessionId;
     _playerId = playerId;
+    _lastEventId = lastEventId;
     // _baseUrl = this.baseUrl;
     _disconnected = false;
     _retryCount = 0;
