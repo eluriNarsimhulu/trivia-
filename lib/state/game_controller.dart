@@ -378,21 +378,40 @@ class GameController {
     await _eventSubscription?.cancel();
     _eventSubscription = null;
 
+    // await _sseService.connect(
+    //   sessionId: sessionId,
+    //   playerId: playerId,
+    //   lastEventId: lastEventId,
+    // );
+    // _eventSubscription = _sseService.events.listen(
+    //   _onEvent,
+    //   onError: _onSseError,
+    //   cancelOnError: false,
+    // );
+
+    // _startSyncTimer();
     await _sseService.connect(
       sessionId: sessionId,
       playerId: playerId,
       lastEventId: lastEventId,
     );
+
+    // 🔥 FIX: Immediately sync after reconnect
+    await _performSync();
+
     _eventSubscription = _sseService.events.listen(
       _onEvent,
       onError: _onSseError,
       cancelOnError: false,
+      
     );
 
-    _startSyncTimer();
+    // _startSyncTimer();
   }
 
   void _onEvent(GameEvent event) {
+    print("EVENT RECEIVED: ${event.runtimeType}");
+    gameLog('EVENT', event.runtimeType.toString());
     switch (event) {
       case RoundCountdownEvent():
         _handleRoundCountdown(event);
@@ -486,10 +505,14 @@ class GameController {
 
   void _handleQuestion(QuestionEvent event) {
     final currentPhase = state.value.phase;
-    final validPriorPhases = {GamePhase.countdown, GamePhase.leaderboard};
+    // final validPriorPhases = {GamePhase.countdown, GamePhase.leaderboard};
 
-    if (!validPriorPhases.contains(currentPhase)) {
-      gameWarn('GameController', 'QUESTION ignored — phase is $currentPhase');
+    // if (!validPriorPhases.contains(currentPhase)) {
+    //   gameWarn('GameController', 'QUESTION ignored — phase is $currentPhase');
+    //   return;
+    // }
+    if (state.value.phase == GamePhase.gameEnd) {
+      gameWarn('GameController', 'QUESTION ignored — game ended');
       return;
     }
 
@@ -553,8 +576,13 @@ class GameController {
   void _handleRoundCountdown(RoundCountdownEvent event) {
     final phase = state.value.phase;
 
-    if (phase != GamePhase.leaderboard && phase != GamePhase.countdown) {
-      gameWarn('GameController', 'ROUND_COUNTDOWN ignored — phase is $phase');
+    // if (phase != GamePhase.leaderboard && phase != GamePhase.countdown) {
+    //   gameWarn('GameController', 'ROUND_COUNTDOWN ignored — phase is $phase');
+    //   return;
+    // }
+    // 🔥 Relax condition (avoid blocking flow)
+    if (phase == GamePhase.gameEnd) {
+      gameWarn('GameController', 'ROUND_COUNTDOWN ignored — game ended');
       return;
     }
 
@@ -583,6 +611,10 @@ class GameController {
         session:    session?.copyWith(currentRound: event.roundNumber),
       ),
     );
+    // 🔥 Ensure next round continues (fallback)
+if (state.value.phase == GamePhase.leaderboard) {
+  gameLog('GameController', 'Leaderboard received — waiting for next ROUND_COUNTDOWN');
+}
   }
 
   void _handleGameEnd(GameEndEvent event) {
@@ -688,7 +720,8 @@ class GameController {
     _cancelCountdownTimer();
     _countdownTimer = Timer(_kCountdownDuration, () {
       if (state.value.phase == GamePhase.countdown) {
-        gameLog('GameController', 'Countdown complete — awaiting QUESTION from server');
+        // gameLog('GameController', 'Countdown complete — awaiting QUESTION from server');
+        gameLog('GameController', 'Countdown complete');
       }
     });
   }
@@ -715,10 +748,10 @@ class GameController {
   // SYNC WATCHDOG (POLLING FALLBACK)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  void _startSyncTimer() {
-    _stopSyncTimer();
-    _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) => _performSync());
-  }
+  // void _startSyncTimer() {
+  //   _stopSyncTimer();
+  //   _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) => _performSync());
+  // }
 
   void _stopSyncTimer() {
     _syncTimer?.cancel();
@@ -740,28 +773,78 @@ class GameController {
     }
   }
 
+  // void _handleSyncState(GameSession serverSession, GamePhase serverPhase) {
+  //   // if (state.value.phase == serverPhase) {
+  //   //   _emit(state.value.copyWith(
+  //   //     session: serverSession,
+  //   //     totalPlayers: serverSession.players.length,
+  //   //   ));
+  //   //   return;
+  //   // }
+
+  //   // 🔥 ALWAYS sync full state (even if phase matches)
+  //   _emit(state.value.copyWith(
+  //     session: serverSession,
+  //     scoringRules: serverSession.scoringRules,
+  //     currentQuestion: serverSession.currentQuestion,
+  //     questionIndex: serverSession.currentRound > 0
+  //         ? serverSession.currentRound - 1
+  //         : 0,
+  //     totalPlayers: serverSession.players.length,
+  //   ));
+
+  //   // Only handle phase change separately
+  //   if (state.value.phase != serverPhase) {
+  //     gameWarn(
+  //       'GameController',
+  //       'SYNC: Phase mismatch! Local=${state.value.phase}, Server=$serverPhase',
+  //     );
+
+  //     _transitionTo(serverPhase);
+  //   }
+
+  //   gameWarn('GameController', 'SYNC: Phase mismatch! Local=${state.value.phase}, Server=$serverPhase. Forcing hydration jump.');
+
+  //   _transitionTo(
+  //     serverPhase,
+  //     updater: (s) => s.copyWith(
+  //       session: serverSession,
+  //       scoringRules: serverSession.scoringRules,
+  //       currentQuestion: serverSession.currentQuestion,
+  //       questionIndex: serverSession.currentRound > 0 ? serverSession.currentRound - 1 : 0,
+  //       totalPlayers: serverSession.players.length,
+  //     ),
+  //   );
+
+  //   if (serverPhase == GamePhase.countdown) {
+  //     _startCountdownTimer();
+  //   }
+  // }
   void _handleSyncState(GameSession serverSession, GamePhase serverPhase) {
-    if (state.value.phase == serverPhase) {
-      _emit(state.value.copyWith(
-        session: serverSession,
-        totalPlayers: serverSession.players.length,
-      ));
-      return;
+    final currentPhase = state.value.phase;
+
+    // 🔥 Always sync core data
+    _emit(state.value.copyWith(
+      session: serverSession,
+      scoringRules: serverSession.scoringRules,
+      currentQuestion: serverSession.currentQuestion,
+      questionIndex: serverSession.currentRound > 0
+          ? serverSession.currentRound - 1
+          : 0,
+      totalPlayers: serverSession.players.length,
+    ));
+
+    // 🔥 Only transition ONCE
+    if (currentPhase != serverPhase) {
+      gameWarn(
+        'GameController',
+        'SYNC fixing phase: $currentPhase → $serverPhase',
+      );
+
+      _transitionTo(serverPhase);
     }
 
-    gameWarn('GameController', 'SYNC: Phase mismatch! Local=${state.value.phase}, Server=$serverPhase. Forcing hydration jump.');
-
-    _transitionTo(
-      serverPhase,
-      updater: (s) => s.copyWith(
-        session: serverSession,
-        scoringRules: serverSession.scoringRules,
-        currentQuestion: serverSession.currentQuestion,
-        questionIndex: serverSession.currentRound > 0 ? serverSession.currentRound - 1 : 0,
-        totalPlayers: serverSession.players.length,
-      ),
-    );
-
+    // 🔥 Restart countdown if needed
     if (serverPhase == GamePhase.countdown) {
       _startCountdownTimer();
     }

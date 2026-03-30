@@ -52,8 +52,8 @@ class ServiceRegistry {
   final String _apiBaseUrl;
 
   ServiceRegistry({
-    // String apiBaseUrl = 'http://192.168.29.220:3000',
-    String apiBaseUrl = 'http://10.67.220.147:3000',
+    String apiBaseUrl = 'http://10.175.8.147:3000',
+    // String apiBaseUrl = 'http://10.67.220.147:3000',
     // String apiBaseUrl = 'https://trivia-server-zbdl.onrender.com',
   }) : _apiBaseUrl = apiBaseUrl;
 

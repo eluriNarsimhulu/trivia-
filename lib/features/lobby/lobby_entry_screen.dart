@@ -181,7 +181,7 @@ class _LobbyEntryScreenState extends State<LobbyEntryScreen> {
         const Icon(Icons.quiz_rounded, size: 72, color: Color(0xFFE94560)),
         const SizedBox(height: 16),
         Text(
-          'Trivia Night v8',
+          'Trivia Night v9',
           style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,

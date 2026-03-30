@@ -125,9 +125,9 @@ class SseService implements SseServiceInterface {
     // Close the broadcast stream only on intentional disconnect.
     // We do NOT close it on reconnect — GameController's subscription
     // must survive reconnects without re-subscribing.
-    if (!_controller.isClosed) {
-      await _controller.close();
-    }
+    // if (!_controller.isClosed) {
+    //   await _controller.close();
+    // }
   }
 
   // ---------------------------------------------------------------------------
@@ -275,7 +275,10 @@ class SseService implements SseServiceInterface {
       final event = _parseEvent(eventName, json);
 
       if (event != null) {
-        _controller.add(event);
+        // _controller.add(event);
+        if (!_controller.isClosed) {
+          _controller.add(event);
+        }
       } else {
         debugPrint('[SseService] ⚠️ Unrecognised event type: "$eventName" — ignored.');
       }
@@ -289,6 +292,8 @@ class SseService implements SseServiceInterface {
   /// Maps a raw SSE event name + JSON payload to a typed GameEvent.
   /// Returns null for unknown event names so the caller can log and skip.
   GameEvent? _parseEvent(String eventName, Map<String, dynamic> json) {
+    print("RAW EVENT NAME: $eventName");
+    print("RAW DATA: $json");
     switch (eventName) {
       case 'ROUND_COUNTDOWN':
         return RoundCountdownEvent.fromJson(json);
